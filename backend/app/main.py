@@ -10,7 +10,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from .auth import get_current_user_id
-from .database import Base, engine, get_db
+from .database import Base, engine, get_db, migrate_article_assessment_columns
 from .config import settings
 from .models import (
     Article,
@@ -47,7 +47,7 @@ from .services.context_engine import build_context
 from .services.delivery import DAILY_LIMITS, generate_daily_report
 from .services.feedback import apply_message_directive, message_to_feedback_type, update_user_preferences
 from .services.insight_generation import generate_insight
-from .services.scoring import THRESHOLDS, score_with_db
+from .services.scoring import THRESHOLDS, pick_best_company_for_article, score_with_db
 
 app = FastAPI(title="Portfolio Intelligence Platform")
 logger = logging.getLogger(__name__)
@@ -70,6 +70,7 @@ app.add_middleware(
 def startup_create_tables() -> None:
     try:
         Base.metadata.create_all(bind=engine)
+        migrate_article_assessment_columns()
     except SQLAlchemyError as exc:
         logger.warning("Database unavailable on startup; API is up but DB operations will fail until DB is reachable: %s", exc)
 
@@ -93,79 +94,48 @@ def _run_processing_for_user(user: User, db: Session) -> dict:
     created = 0
     evaluations = []
     contexts = db.query(ContextProfile).filter(ContextProfile.user_id == user.id).all()
+    pref = db.query(UserPreference).filter(UserPreference.user_id == user.id).one_or_none()
 
-    def label_for_company(article: Article) -> tuple[str | None, str, str]:
-        text = f"{article.title} {article.content}".lower()
-        best_company_id: str | None = None
-        best_score = -1.0
-        best_reason = "No direct portfolio match found."
-        best_type = "irrelevant"
-        for ctx in contexts:
-            company = db.get(Company, ctx.company_id)
-            company_name = company.name if company else "company"
-            score = 0.0
-            reasons: list[str] = []
-            keyword_hits = sum(1 for k in ctx.keywords if k and k.lower() in text)
-            if keyword_hits:
-                score += min(0.5, keyword_hits * 0.05)
-                reasons.append(f"keyword overlap {keyword_hits}")
-            competitor_hits = sum(1 for c in ctx.competitors if c and c.lower() in text)
-            if competitor_hits:
-                score += min(0.3, competitor_hits * 0.1)
-                reasons.append("competitor mention")
-            if ctx.sector and ctx.sector.lower() in text:
-                score += 0.2
-                reasons.append("sector signal")
-
-            rel_type = "industry"
-            if competitor_hits:
-                rel_type = "competitor"
-            if keyword_hits >= 2:
-                rel_type = "direct"
-            if score > best_score:
-                best_score = score
-                best_company_id = str(ctx.company_id)
-                best_type = rel_type if score > 0 else "irrelevant"
-                best_reason = (
-                    f"Relevant for {company_name}: {', '.join(reasons)}"
-                    if reasons
-                    else "Weak company linkage; broad market-only signal."
-                )
-        return best_company_id, best_type, best_reason
     for article in articles:
         feature = db.query(ArticleFeature).filter(ArticleFeature.article_id == article.id).one_or_none()
         if not feature:
             feature = persist_article_features(db, article)
         scored = score_with_db(db, str(user.id), article, feature, user.mode)
         passed = bool(scored["passes_threshold"])
-        company_id, relevance_type, relevance_reason = label_for_company(article)
-        if company_id:
-            existing_assessment = (
-                db.query(ArticleAssessment)
-                .filter(
-                    ArticleAssessment.user_id == user.id,
-                    ArticleAssessment.article_id == article.id,
-                    ArticleAssessment.company_id == UUID(company_id),
-                )
-                .one_or_none()
+        comp = scored.get("components") or {}
+        sem_rel = float(comp.get("semantic_relevance", 0.0))
+        sem_cat = str(comp.get("semantic_category", "irrelevant"))
+        sem_reason = str(comp.get("semantic_reason", ""))
+
+        db.query(ArticleAssessment).filter(
+            ArticleAssessment.user_id == user.id,
+            ArticleAssessment.article_id == article.id,
+        ).delete(synchronize_session=False)
+
+        if contexts:
+            best_ctx, em, ev, _base_pc, _final_pc, rel_type = pick_best_company_for_article(
+                feature, contexts, pref, sem_rel, sem_cat
             )
-            semantic_score = float(scored["components"].get("semantic_relevance", 0.0))
-            if existing_assessment:
-                existing_assessment.relevance_type = relevance_type
-                existing_assessment.relevance_score = semantic_score
-                existing_assessment.conclusion = relevance_reason
-                existing_assessment.passed_step_2 = passed
-            else:
+            if best_ctx:
+                company = db.get(Company, best_ctx.company_id)
+                cname = company.name if company else "company"
+                conclusion = f"{sem_reason} · Best match: {cname} ({rel_type})."
                 db.add(
                     ArticleAssessment(
                         user_id=user.id,
                         article_id=article.id,
-                        company_id=UUID(company_id),
+                        company_id=best_ctx.company_id,
                         article_title=article.title,
                         article_url=article.url,
-                        relevance_type=relevance_type,
-                        relevance_score=semantic_score,
-                        conclusion=relevance_reason,
+                        relevance_type=rel_type,
+                        relevance_score=sem_rel,
+                        base_score=float(scored["base_score"]),
+                        final_score=float(scored["final_score"]),
+                        semantic_category=sem_cat,
+                        semantic_reason=sem_reason,
+                        entity_match=em,
+                        event_importance=ev,
+                        conclusion=conclusion,
                         passed_step_2=passed,
                         displayed=False,
                     )
@@ -230,6 +200,7 @@ def _run_processing_for_user(user: User, db: Session) -> dict:
         "insights_created": created,
         "threshold": THRESHOLDS[user.mode],
         "evaluated_count": len(articles),
+        "process_article_ids": [str(a.id) for a in articles],
         "step_2_evaluations": evaluations,
     }
 

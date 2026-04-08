@@ -179,6 +179,46 @@ def score_article(article: Article, feature: ArticleFeature, contexts: list[Cont
     }
 
 
+def relevance_type_for_match(semantic_category: str, entity_match: float) -> str:
+    if entity_match >= 0.8:
+        return "direct"
+    if entity_match >= 0.5:
+        return "competitor"
+    if semantic_category in {"direct", "competitor", "industry"}:
+        return semantic_category
+    if semantic_category == "irrelevant":
+        return "irrelevant"
+    return "industry"
+
+
+def pick_best_company_for_article(
+    feature: ArticleFeature,
+    contexts: list[ContextProfile],
+    user_pref: UserPreference | None,
+    semantic_relevance: float,
+    semantic_category: str,
+) -> tuple[ContextProfile | None, float, float, float, float, str]:
+    """Assign article to the portfolio company with highest hybrid score (shared semantic + per-company entity/event)."""
+    best_ctx: ContextProfile | None = None
+    best_final = -1.0
+    best_base = 0.0
+    best_em = 0.0
+    best_ev = 0.0
+    for ctx in contexts:
+        em = _entity_match(feature, [ctx])
+        ev = _event_importance(feature, [ctx])
+        base = 0.5 * semantic_relevance + 0.3 * em + 0.2 * ev
+        final = max(0.0, min(1.0, base * _preference_multiplier(user_pref, feature, [ctx])))
+        if final > best_final:
+            best_final = final
+            best_base = base
+            best_ctx = ctx
+            best_em = em
+            best_ev = ev
+    rel_type = relevance_type_for_match(semantic_category, best_em) if best_ctx else "irrelevant"
+    return best_ctx, best_em, best_ev, best_base, best_final, rel_type
+
+
 def score_with_db(db: Session, user_id: str, article: Article, feature: ArticleFeature, mode: UserMode) -> dict[str, Any]:
     contexts = db.query(ContextProfile).filter(ContextProfile.user_id == user_id).all()
     pref = db.query(UserPreference).filter(UserPreference.user_id == user_id).one_or_none()
