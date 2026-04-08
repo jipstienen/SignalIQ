@@ -252,7 +252,7 @@ def build_user_context(db: Session = Depends(get_db), user_id: str = Depends(get
 @app.post("/pipeline/ingest")
 def ingest_articles(db: Session = Depends(get_db), user_id: str = Depends(get_current_user_id)):
     _get_user_or_404(user_id, db)
-    result = fetch_articles(db)
+    result = fetch_articles(db, user_id=user_id)
     return result
 
 
@@ -328,7 +328,7 @@ def reasoning_generate(payload: ReasoningGenerateInput, db: Session = Depends(ge
 
     db.commit()
     context_result = {"profiles_created_or_updated": build_context(str(user.id), db)}
-    ingest_result = fetch_articles(db)
+    ingest_result = fetch_articles(db, user_id=str(user.id))
     process_result = _run_processing_for_user(user, db)
     trace = _build_reasoning_trace(user, db, payload.limit)
 

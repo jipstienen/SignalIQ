@@ -7,7 +7,7 @@ from dateutil.parser import isoparse
 from sqlalchemy.orm import Session
 
 from ..config import settings
-from ..models import Article, ArticleFeature
+from ..models import Article, ArticleFeature, Company, UserCompany
 
 DEFAULT_FEEDS = [
     {
@@ -53,34 +53,84 @@ def _fetch_newsapi_items() -> tuple[list[dict[str, Any]], str]:
         logger.info("NEWSAPI_KEY not set; using default sample feed.")
         return [], "missing_key"
 
+    max_fetch = max(1, min(settings.stage1_max_fetch, 1000))
+    page_size = max(1, min(settings.newsapi_page_size, 100))
     params = {
         "q": settings.newsapi_query,
         "language": "en",
         "sortBy": "publishedAt",
-        "from": (datetime.utcnow() - timedelta(days=2)).date().isoformat(),
-        "pageSize": max(1, min(settings.newsapi_page_size, 100)),
+        "from": (datetime.utcnow() - timedelta(days=max(1, settings.stage1_days_back))).date().isoformat(),
+        "pageSize": page_size,
     }
     headers = {"X-Api-Key": settings.newsapi_key}
 
+    normalized: list[dict[str, Any]] = []
+    pages = max(1, (max_fetch + page_size - 1) // page_size)
     try:
         with httpx.Client(timeout=20.0) as client:
-            res = client.get(settings.newsapi_url, params=params, headers=headers)
-            res.raise_for_status()
-            payload = res.json()
+            for page in range(1, pages + 1):
+                page_params = {**params, "page": page}
+                res = client.get(settings.newsapi_url, params=page_params, headers=headers)
+                res.raise_for_status()
+                payload = res.json()
+                articles = payload.get("articles", [])
+                if not articles:
+                    break
+                for item in articles:
+                    row = _normalize_newsapi_item(item)
+                    if row:
+                        normalized.append(row)
+                        if len(normalized) >= max_fetch:
+                            return normalized, "ok"
     except Exception as exc:
         logger.warning("NewsAPI fetch failed; using default sample feed: %s", exc)
         return [], "fetch_failed"
-
-    articles = payload.get("articles", [])
-    normalized: list[dict[str, Any]] = []
-    for item in articles:
-        row = _normalize_newsapi_item(item)
-        if row:
-            normalized.append(row)
     return normalized, "ok"
 
 
-def fetch_articles(db: Session, feeds: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+def _build_generic_terms(db: Session, user_id: str | None) -> set[str]:
+    base_terms = {
+        "acquisition",
+        "merger",
+        "funding",
+        "capital",
+        "expansion",
+        "contract",
+        "supply chain",
+        "pricing",
+        "regulatory",
+        "partnership",
+        "layoff",
+    }
+    if not user_id:
+        return base_terms
+    links = db.query(UserCompany).filter(UserCompany.user_id == user_id).all()
+    for link in links:
+        company = db.get(Company, link.company_id)
+        if not company:
+            continue
+        base_terms.add(company.name.lower())
+        if company.sector:
+            base_terms.add(company.sector.lower())
+        if company.subsector:
+            base_terms.add(company.subsector.lower())
+    return base_terms
+
+
+def _broad_filter(items: list[dict[str, Any]], terms: set[str]) -> list[dict[str, Any]]:
+    scored: list[tuple[int, dict[str, Any]]] = []
+    for item in items:
+        text = f"{item.get('title', '')} {item.get('content', '')}".lower()
+        hit_count = sum(1 for term in terms if term and term in text)
+        if hit_count <= 0:
+            continue
+        scored.append((hit_count, item))
+    scored.sort(key=lambda x: x[0], reverse=True)
+    limit = max(1, min(settings.stage1_candidate_limit, 500))
+    return [item for _, item in scored[:limit]]
+
+
+def fetch_articles(db: Session, user_id: str | None = None, feeds: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     newsapi_items, newsapi_status = _fetch_newsapi_items()
     if feeds:
         items = feeds
@@ -92,8 +142,12 @@ def fetch_articles(db: Session, feeds: list[dict[str, Any]] | None = None) -> di
         items = DEFAULT_FEEDS
         source = "fallback_sample"
 
+    # Step 1: broad funnel (generic terms over 7-day max 1000 fetch)
+    generic_terms = _build_generic_terms(db, user_id)
+    broad_candidates = _broad_filter(items, generic_terms) if source != "fallback_sample" else items
+
     inserted = 0
-    for item in items:
+    for item in broad_candidates:
         exists = db.query(Article).filter(Article.url == item["url"]).one_or_none()
         if exists:
             continue
@@ -101,6 +155,12 @@ def fetch_articles(db: Session, feeds: list[dict[str, Any]] | None = None) -> di
         inserted += 1
     db.commit()
     return {
+        "step_1_broad": {
+            "fetched": len(items),
+            "generic_terms": len(generic_terms),
+            "candidates_selected": len(broad_candidates),
+            "days_back": max(1, settings.stage1_days_back),
+        },
         "inserted": inserted,
         "source": source,
         "fetched": len(items),

@@ -16,6 +16,9 @@ class Settings(BaseSettings):
     newsapi_url: str = "https://newsapi.org/v2/everything"
     newsapi_query: str = "private equity OR portfolio company OR M&A OR funding"
     newsapi_page_size: int = 25
+    stage1_max_fetch: int = 1000
+    stage1_candidate_limit: int = 250
+    stage1_days_back: int = 7
     ollama_base_url: str = "http://localhost:11434"
     ollama_model: str = "llama3.1:8b"
 
