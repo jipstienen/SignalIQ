@@ -77,6 +77,12 @@ class AssessmentOut(BaseModel):
     article_url: str
     relevance_type: str
     relevance_score: float
+    base_score: float = 0.0
+    final_score: float = 0.0
+    semantic_category: str = "irrelevant"
+    semantic_reason: str = ""
+    entity_match: float = 0.0
+    event_importance: float = 0.0
     conclusion: str
     passed_step_2: bool
     displayed: bool

@@ -255,12 +255,65 @@ def _build_reasoning_trace(user: User, db: Session, limit: int) -> dict:
         )
 
     article_rows = db.query(Article).order_by(Article.published_at.desc()).limit(max(1, min(limit, 100))).all()
+    aid_list = [a.id for a in article_rows]
+    assessment_rows: list[ArticleAssessment] = []
+    if aid_list:
+        assessment_rows = (
+            db.query(ArticleAssessment)
+            .filter(ArticleAssessment.user_id == user.id, ArticleAssessment.article_id.in_(aid_list))
+            .order_by(ArticleAssessment.created_at.desc())
+            .all()
+        )
+    assessment_by_article: dict[str, ArticleAssessment] = {}
+    for ass in assessment_rows:
+        key = str(ass.article_id)
+        if key not in assessment_by_article:
+            assessment_by_article[key] = ass
+
+    threshold = THRESHOLDS[user.mode]
     scored_rows = []
     for article in article_rows:
         feature = db.query(ArticleFeature).filter(ArticleFeature.article_id == article.id).one_or_none()
         if not feature:
             feature = persist_article_features(db, article)
         insight = db.query(Insight).filter(Insight.article_id == article.id, Insight.user_id == user.id).one_or_none()
+        assessment = assessment_by_article.get(str(article.id))
+
+        components = None
+        if assessment:
+            components = {
+                "semantic_relevance": float(assessment.relevance_score),
+                "semantic_category": assessment.semantic_category,
+                "semantic_reason": assessment.semantic_reason,
+                "entity_match": float(assessment.entity_match),
+                "event_importance": float(assessment.event_importance),
+            }
+
+        score_payload = None
+        if insight:
+            score_payload = {
+                "base_score": float(insight.base_score),
+                "final_score": float(insight.final_score),
+                "passes_threshold": float(insight.final_score) >= threshold,
+                "components": components,
+                "source": "insight",
+            }
+        elif assessment:
+            score_payload = {
+                "base_score": float(assessment.base_score),
+                "final_score": float(assessment.final_score),
+                "passes_threshold": float(assessment.final_score) >= threshold,
+                "components": components,
+                "source": "assessment",
+            }
+
+        matched_company_name = None
+        matched_company_id = None
+        if assessment:
+            matched_company_id = str(assessment.company_id)
+            co = db.get(Company, assessment.company_id)
+            matched_company_name = co.name if co else None
+
         scored_rows.append(
             {
                 "article_id": str(article.id),
@@ -275,16 +328,13 @@ def _build_reasoning_trace(user: User, db: Session, limit: int) -> dict:
                     "sentiment": feature.sentiment,
                     "geography": feature.geography,
                 },
-                "score": (
-                    {
-                        "base_score": insight.base_score,
-                        "final_score": insight.final_score,
-                        "passes_threshold": insight.final_score >= THRESHOLDS[user.mode],
-                        "components": None,
-                    }
-                    if insight
-                    else None
-                ),
+                "matched_company_id": matched_company_id,
+                "matched_company_name": matched_company_name,
+                "relevance_type": assessment.relevance_type if assessment else None,
+                "conclusion": assessment.conclusion if assessment else None,
+                "passed_step_2": bool(assessment.passed_step_2) if assessment else None,
+                "displayed": bool(assessment.displayed) if assessment else None,
+                "score": score_payload,
                 "insight_created": insight is not None,
                 "insight_id": str(insight.id) if insight else None,
             }
@@ -308,6 +358,10 @@ def _build_reasoning_trace(user: User, db: Session, limit: int) -> dict:
             "sensitivity": preference.sensitivity if preference else 1.0,
         },
         "scored_articles": scored_rows,
+        "trace_meta": {
+            "article_limit": max(1, min(limit, 100)),
+            "assessments_in_view": sum(1 for r in scored_rows if r.get("score")),
+        },
     }
 
 
@@ -441,6 +495,23 @@ def reasoning_generate(payload: ReasoningGenerateInput, db: Session = Depends(ge
     process_result = _run_processing_for_user(user, db)
     trace = _build_reasoning_trace(user, db, payload.limit)
 
+    run_summary = {
+        "step_1_fetched": ingest_result.get("fetched"),
+        "ingest_inserted": ingest_result.get("inserted"),
+        "ingest_inserted_article_ids": ingest_result.get("inserted_article_ids") or [],
+        "ingest_source": ingest_result.get("source"),
+        "newsapi_status": ingest_result.get("newsapi_status"),
+        "process_evaluated_count": process_result.get("evaluated_count"),
+        "process_article_ids": process_result.get("process_article_ids") or [],
+        "insights_created": process_result.get("insights_created"),
+        "threshold": process_result.get("threshold"),
+        "trace_article_limit": payload.limit,
+        "note": (
+            "Step 1 is the ingest funnel. Step 2 (process) scores up to stage1_candidate_limit recent articles "
+            "in the database, not only rows inserted in this ingest. Compare ingest_inserted_article_ids vs process_article_ids."
+        ),
+    }
+
     return {
         "strictness": payload.strictness,
         "mode": user.mode.value,
@@ -451,6 +522,7 @@ def reasoning_generate(payload: ReasoningGenerateInput, db: Session = Depends(ge
         "context": context_result,
         "ingest": ingest_result,
         "process": process_result,
+        "run_summary": run_summary,
         "trace": trace,
     }
 
