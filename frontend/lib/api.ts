@@ -55,6 +55,12 @@ export type ReasoningTrace = {
   }>;
 };
 
+export type ReasoningCompanyInput = {
+  name: string;
+  industry: string;
+  description: string;
+};
+
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 const USER_TOKEN = process.env.NEXT_PUBLIC_USER_TOKEN || "";
 
@@ -114,6 +120,20 @@ export async function runContextBuild(): Promise<Record<string, unknown>> {
 export async function runProcess(): Promise<Record<string, unknown>> {
   const res = await fetch(`${API_URL}/pipeline/process`, { method: "POST", headers: headers() });
   if (!res.ok) throw new Error(`Process failed: ${res.status}`);
+  return res.json();
+}
+
+export async function runReasoningGenerate(
+  companies: ReasoningCompanyInput[],
+  strictness: "very_narrow" | "average" | "wide",
+  limit = 25
+): Promise<{ trace: ReasoningTrace } & Record<string, unknown>> {
+  const res = await fetch(`${API_URL}/reasoning/generate`, {
+    method: "POST",
+    headers: headers(),
+    body: JSON.stringify({ companies, strictness, limit }),
+  });
+  if (!res.ok) throw new Error(`Generate failed: ${res.status}`);
   return res.json();
 }
 

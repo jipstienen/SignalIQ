@@ -69,6 +69,18 @@ class QueryResponse(BaseModel):
     sources: list[UUID]
 
 
+class ReasoningCompanyInput(BaseModel):
+    name: str
+    industry: str | None = None
+    description: str | None = None
+
+
+class ReasoningGenerateInput(BaseModel):
+    companies: list[ReasoningCompanyInput] = Field(default_factory=list)
+    strictness: str = "average"
+    limit: int = 25
+
+
 class SettingsUpdate(BaseModel):
     mode: UserMode | None = None
     event_weights: dict[str, Any] | None = None

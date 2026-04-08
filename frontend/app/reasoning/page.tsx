@@ -1,11 +1,25 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ReasoningTrace, getReasoningTrace, runContextBuild, runIngest, runProcess } from "../../lib/api";
+import {
+  ReasoningCompanyInput,
+  ReasoningTrace,
+  getReasoningTrace,
+  runContextBuild,
+  runIngest,
+  runProcess,
+  runReasoningGenerate,
+} from "../../lib/api";
+
+type Strictness = "very_narrow" | "average" | "wide";
 
 export default function ReasoningPage() {
   const [trace, setTrace] = useState<ReasoningTrace | null>(null);
   const [limit, setLimit] = useState(25);
+  const [strictness, setStrictness] = useState<Strictness>("average");
+  const [tableInput, setTableInput] = useState(
+    "company name,industry,description\nACME Logistics,logistics,Freight software platform\nNorthstar Health,healthcare,Operator of outpatient clinics"
+  );
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string>("");
   const [lastResult, setLastResult] = useState<Record<string, unknown> | null>(null);
@@ -18,6 +32,26 @@ export default function ReasoningPage() {
   useEffect(() => {
     refreshTrace();
   }, [limit]);
+
+  const parseTableInput = (): ReasoningCompanyInput[] => {
+    const lines = tableInput
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0);
+    if (lines.length === 0) return [];
+
+    const startAt = lines[0].toLowerCase().includes("company") ? 1 : 0;
+    const rows: ReasoningCompanyInput[] = [];
+    for (const line of lines.slice(startAt)) {
+      const cells = line.split(",").map((c) => c.trim());
+      rows.push({
+        name: cells[0] || "",
+        industry: cells[1] || "",
+        description: cells.slice(2).join(", ") || "",
+      });
+    }
+    return rows.filter((r) => r.name.length > 0);
+  };
 
   const runAction = async (name: string, fn: () => Promise<Record<string, unknown>>) => {
     try {
@@ -34,12 +68,53 @@ export default function ReasoningPage() {
     }
   };
 
+  const runGenerate = async () => {
+    const companies = parseTableInput();
+    if (companies.length === 0) {
+      setStatus("Generate failed: please provide at least one company row.");
+      return;
+    }
+    try {
+      setBusy(true);
+      setStatus("Generate running: context -> ingest -> process...");
+      const result = await runReasoningGenerate(companies, strictness, limit);
+      setLastResult(result);
+      setTrace(result.trace);
+      setStatus("Generate completed");
+    } catch (err) {
+      setStatus(`Generate failed: ${err instanceof Error ? err.message : "unknown error"}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <main>
       <h1>Pipeline Reasoning Trace</h1>
-      <p>Inspect how inputs become insights through each deterministic stage.</p>
+      <p>Paste company rows, choose strictness, then generate a full trace from input to scored output.</p>
       <section style={{ marginBottom: 20, border: "1px solid #ddd", borderRadius: 8, padding: 12 }}>
-        <h2>Pipeline Controls</h2>
+        <h2>Input Table and Controls</h2>
+        <p>Use CSV format: company name, industry, description</p>
+        <textarea
+          value={tableInput}
+          onChange={(e) => setTableInput(e.target.value)}
+          rows={6}
+          style={{ width: "100%", fontFamily: "monospace", marginBottom: 8 }}
+        />
+        <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap", marginBottom: 8 }}>
+          <label>
+            Strictness:{" "}
+            <select value={strictness} onChange={(e) => setStrictness(e.target.value as Strictness)}>
+              <option value="very_narrow">very narrow</option>
+              <option value="average">average</option>
+              <option value="wide">wide</option>
+            </select>
+          </label>
+          <button disabled={busy} onClick={runGenerate}>Generate Full Trace</button>
+        </div>
+      </section>
+      <section style={{ marginBottom: 20, border: "1px solid #ddd", borderRadius: 8, padding: 12 }}>
+        <h2>Manual Pipeline Controls</h2>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
           <button disabled={busy} onClick={() => runAction("Ingest", runIngest)}>Run Ingest</button>
           <button disabled={busy} onClick={() => runAction("Context Build", runContextBuild)}>Build Context</button>

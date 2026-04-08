@@ -17,6 +17,7 @@ from .models import (
     Insight,
     User,
     UserCompany,
+    UserCompanyType,
     UserFeedback,
     UserMode,
     UserPreference,
@@ -29,6 +30,7 @@ from .schemas import (
     MessageFeedbackInput,
     QueryInput,
     QueryResponse,
+    ReasoningGenerateInput,
     SettingsUpdate,
     UserCompanyCreate,
     UserCreate,
@@ -69,6 +71,120 @@ def _get_user_or_404(user_id: str, db: Session) -> User:
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     return user
+
+
+def _run_processing_for_user(user: User, db: Session) -> dict:
+    articles = db.query(Article).all()
+    created = 0
+    for article in articles:
+        feature = db.query(ArticleFeature).filter(ArticleFeature.article_id == article.id).one_or_none()
+        if not feature:
+            feature = persist_article_features(db, article)
+        scored = score_with_db(db, str(user.id), article, feature, user.mode)
+        if not scored["passes_threshold"]:
+            continue
+        exists = db.query(Insight).filter(Insight.article_id == article.id, Insight.user_id == user.id).one_or_none()
+        if exists:
+            continue
+        text = generate_insight(article, "portfolio company", feature.event_type or "general")
+        db.add(
+            Insight(
+                article_id=article.id,
+                user_id=user.id,
+                summary=text["summary"],
+                why_it_matters=text["why_it_matters"],
+                base_score=scored["base_score"],
+                final_score=scored["final_score"],
+            )
+        )
+        created += 1
+    db.commit()
+    return {"insights_created": created, "threshold": THRESHOLDS[user.mode]}
+
+
+def _build_reasoning_trace(user: User, db: Session, limit: int) -> dict:
+    contexts = db.query(ContextProfile).filter(ContextProfile.user_id == user.id).all()
+    preference = db.query(UserPreference).filter(UserPreference.user_id == user.id).one_or_none()
+    links = db.query(UserCompany).filter(UserCompany.user_id == user.id).all()
+
+    companies = []
+    for link in links:
+        company = db.get(Company, link.company_id)
+        if not company:
+            continue
+        companies.append(
+            {
+                "id": str(company.id),
+                "name": company.name,
+                "type": link.type.value,
+                "sector": company.sector,
+                "aliases": company.aliases,
+                "description": company.description,
+            }
+        )
+
+    context_rows = []
+    for ctx in contexts:
+        context_rows.append(
+            {
+                "company_id": str(ctx.company_id),
+                "sector": ctx.sector,
+                "keywords": ctx.keywords,
+                "competitors": ctx.competitors,
+                "event_weights": ctx.event_weights,
+                "priority_weight": ctx.priority_weight,
+            }
+        )
+
+    article_rows = db.query(Article).order_by(Article.published_at.desc()).limit(max(1, min(limit, 100))).all()
+    scored_rows = []
+    for article in article_rows:
+        feature = db.query(ArticleFeature).filter(ArticleFeature.article_id == article.id).one_or_none()
+        if not feature:
+            feature = persist_article_features(db, article)
+        score = score_with_db(db, str(user.id), article, feature, user.mode)
+        insight = db.query(Insight).filter(Insight.article_id == article.id, Insight.user_id == user.id).one_or_none()
+        scored_rows.append(
+            {
+                "article_id": str(article.id),
+                "title": article.title,
+                "source": article.source,
+                "url": article.url,
+                "published_at": article.published_at.isoformat(),
+                "features": {
+                    "entities": feature.entities,
+                    "sectors": feature.sectors,
+                    "event_type": feature.event_type,
+                    "sentiment": feature.sentiment,
+                    "geography": feature.geography,
+                },
+                "score": score,
+                "insight_created": insight is not None,
+                "insight_id": str(insight.id) if insight else None,
+            }
+        )
+
+    return {
+        "user": {"id": str(user.id), "email": user.email, "mode": user.mode.value, "threshold": THRESHOLDS[user.mode]},
+        "companies": companies,
+        "contexts": context_rows,
+        "preferences": {
+            "event_weights": preference.event_weights if preference else {},
+            "sector_weights": preference.sector_weights if preference else {},
+            "company_weights": preference.company_weights if preference else {},
+            "sensitivity": preference.sensitivity if preference else 1.0,
+        },
+        "scored_articles": scored_rows,
+    }
+
+
+def _strictness_to_mode(strictness: str) -> UserMode:
+    normalized = strictness.strip().lower()
+    if normalized in {"very narrow", "very_narrow", "narrow"}:
+        return UserMode.high_signal
+    if normalized in {"wide", "broad"}:
+        return UserMode.exploratory
+    return UserMode.balanced
 
 
 @app.post("/users")
@@ -119,31 +235,7 @@ def ingest_articles(db: Session = Depends(get_db), user_id: str = Depends(get_cu
 @app.post("/pipeline/process")
 def process_articles(db: Session = Depends(get_db), user_id: str = Depends(get_current_user_id)):
     user = _get_user_or_404(user_id, db)
-    articles = db.query(Article).all()
-    created = 0
-    for article in articles:
-        feature = persist_article_features(db, article)
-        scored = score_with_db(db, user_id, article, feature, user.mode)
-        # Enforce deterministic threshold and include exploration budget later in a daily job.
-        if not scored["passes_threshold"]:
-            continue
-        exists = db.query(Insight).filter(Insight.article_id == article.id, Insight.user_id == user_id).one_or_none()
-        if exists:
-            continue
-        text = generate_insight(article, "portfolio company", feature.event_type or "general")
-        db.add(
-            Insight(
-                article_id=article.id,
-                user_id=user_id,
-                summary=text["summary"],
-                why_it_matters=text["why_it_matters"],
-                base_score=scored["base_score"],
-                final_score=scored["final_score"],
-            )
-        )
-        created += 1
-    db.commit()
-    return {"insights_created": created, "threshold": THRESHOLDS[user.mode]}
+    return _run_processing_for_user(user, db)
 
 
 @app.get("/insights", response_model=list[InsightOut])
@@ -168,77 +260,63 @@ def list_articles(limit: int = 50, db: Session = Depends(get_db), user_id: str =
 @app.get("/reasoning")
 def reasoning_trace(limit: int = 25, db: Session = Depends(get_db), user_id: str = Depends(get_current_user_id)):
     user = _get_user_or_404(user_id, db)
-    contexts = db.query(ContextProfile).filter(ContextProfile.user_id == user_id).all()
-    preference = db.query(UserPreference).filter(UserPreference.user_id == user_id).one_or_none()
+    return _build_reasoning_trace(user, db, limit)
 
-    links = db.query(UserCompany).filter(UserCompany.user_id == user_id).all()
-    companies = []
-    for link in links:
-        company = db.get(Company, link.company_id)
-        if not company:
+
+@app.post("/reasoning/generate")
+def reasoning_generate(payload: ReasoningGenerateInput, db: Session = Depends(get_db), user_id: str = Depends(get_current_user_id)):
+    user = _get_user_or_404(user_id, db)
+    user.mode = _strictness_to_mode(payload.strictness)
+
+    created_or_linked = 0
+    for row in payload.companies:
+        name = row.name.strip()
+        if not name:
             continue
-        companies.append(
-            {
-                "id": str(company.id),
-                "name": company.name,
-                "type": link.type.value,
-                "sector": company.sector,
-                "aliases": company.aliases,
-            }
-        )
+        company = db.query(Company).filter(Company.name.ilike(name)).first()
+        if not company:
+            company = Company(
+                name=name,
+                aliases=[name.lower()],
+                sector=(row.industry or "").strip() or None,
+                description=(row.description or "").strip() or None,
+            )
+            db.add(company)
+            db.flush()
+        else:
+            if row.industry and not company.sector:
+                company.sector = row.industry.strip()
+            if row.description and not company.description:
+                company.description = row.description.strip()
 
-    context_rows = []
-    for ctx in contexts:
-        context_rows.append(
-            {
-                "company_id": str(ctx.company_id),
-                "sector": ctx.sector,
-                "keywords": ctx.keywords,
-                "competitors": ctx.competitors,
-                "event_weights": ctx.event_weights,
-                "priority_weight": ctx.priority_weight,
-            }
+        existing_link = (
+            db.query(UserCompany)
+            .filter(
+                UserCompany.user_id == user.id,
+                UserCompany.company_id == company.id,
+                UserCompany.type == UserCompanyType.portfolio,
+            )
+            .one_or_none()
         )
+        if not existing_link:
+            db.add(UserCompany(user_id=user.id, company_id=company.id, type=UserCompanyType.portfolio))
+            created_or_linked += 1
 
-    article_rows = db.query(Article).order_by(Article.published_at.desc()).limit(max(1, min(limit, 100))).all()
-    scored_rows = []
-    for article in article_rows:
-        feature = db.query(ArticleFeature).filter(ArticleFeature.article_id == article.id).one_or_none()
-        if not feature:
-            feature = persist_article_features(db, article)
-        score = score_with_db(db, user_id, article, feature, user.mode)
-        insight = db.query(Insight).filter(Insight.article_id == article.id, Insight.user_id == user_id).one_or_none()
-        scored_rows.append(
-            {
-                "article_id": str(article.id),
-                "title": article.title,
-                "source": article.source,
-                "url": article.url,
-                "published_at": article.published_at.isoformat(),
-                "features": {
-                    "entities": feature.entities,
-                    "sectors": feature.sectors,
-                    "event_type": feature.event_type,
-                    "sentiment": feature.sentiment,
-                    "geography": feature.geography,
-                },
-                "score": score,
-                "insight_created": insight is not None,
-                "insight_id": str(insight.id) if insight else None,
-            }
-        )
+    db.commit()
+    context_result = {"profiles_created_or_updated": build_context(str(user.id), db)}
+    ingest_result = fetch_articles(db)
+    process_result = _run_processing_for_user(user, db)
+    trace = _build_reasoning_trace(user, db, payload.limit)
 
     return {
-        "user": {"id": str(user.id), "email": user.email, "mode": user.mode.value, "threshold": THRESHOLDS[user.mode]},
-        "companies": companies,
-        "contexts": context_rows,
-        "preferences": {
-            "event_weights": preference.event_weights if preference else {},
-            "sector_weights": preference.sector_weights if preference else {},
-            "company_weights": preference.company_weights if preference else {},
-            "sensitivity": preference.sensitivity if preference else 1.0,
-        },
-        "scored_articles": scored_rows,
+        "strictness": payload.strictness,
+        "mode": user.mode.value,
+        "company_rows_received": len(payload.companies),
+        "companies_created_or_linked": created_or_linked,
+        "context": context_result,
+        "ingest": ingest_result,
+        "process": process_result,
+        "trace": trace,
     }
 
 
