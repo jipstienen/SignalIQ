@@ -22,8 +22,12 @@ export type ReasoningTrace = {
     company_id: string;
     sector: string | null;
     subsector?: string;
+    business_model?: string;
     keywords: string[];
     competitors: string[];
+    key_drivers?: string[];
+    risk_factors?: string[];
+    semantic_signals?: string[];
     event_weights: Record<string, number>;
     business_signals?: string[];
     geography?: string[];
@@ -52,11 +56,11 @@ export type ReasoningTrace = {
       base_score: number;
       final_score: number;
       components: {
+        semantic_relevance: number;
+        semantic_category: string;
+        semantic_reason: string;
         entity_match: number;
         event_importance: number;
-        context_relevance: number;
-        proximity: number;
-        novelty: number;
       };
       passes_threshold: boolean;
     };

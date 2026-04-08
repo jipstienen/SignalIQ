@@ -183,10 +183,22 @@ export default function ReasoningPage() {
                   <strong>Subsector:</strong> {ctx.subsector || "n/a"}
                 </p>
                 <p>
+                  <strong>Business Model:</strong> {ctx.business_model || "n/a"}
+                </p>
+                <p>
                   <strong>Keywords:</strong> {ctx.keywords.join(", ") || "n/a"}
                 </p>
                 <p>
                   <strong>Competitors:</strong> {ctx.competitors.join(", ") || "n/a"}
+                </p>
+                <p>
+                  <strong>Key Drivers:</strong> {(ctx.key_drivers || []).join(", ") || "n/a"}
+                </p>
+                <p>
+                  <strong>Risk Factors:</strong> {(ctx.risk_factors || []).join(", ") || "n/a"}
+                </p>
+                <p>
+                  <strong>Semantic Signals:</strong> {(ctx.semantic_signals || []).join(", ") || "n/a"}
                 </p>
                 <p>
                   <strong>Business Signals:</strong> {(ctx.business_signals || []).join(", ") || "n/a"}
@@ -223,10 +235,10 @@ export default function ReasoningPage() {
                   <strong>Score:</strong> final {row.score.final_score.toFixed(3)} (base {row.score.base_score.toFixed(3)})
                 </p>
                 <p>
-                  Components: entity {row.score.components.entity_match.toFixed(2)}, event {row.score.components.event_importance.toFixed(2)}, context{" "}
-                  {row.score.components.context_relevance.toFixed(2)}, proximity {row.score.components.proximity.toFixed(2)}, novelty{" "}
-                  {row.score.components.novelty.toFixed(2)}
+                  Components: semantic {row.score.components.semantic_relevance.toFixed(2)} ({row.score.components.semantic_category}), entity{" "}
+                  {row.score.components.entity_match.toFixed(2)}, event {row.score.components.event_importance.toFixed(2)}
                 </p>
+                <p><strong>Semantic Reason:</strong> {row.score.components.semantic_reason || "n/a"}</p>
                 <p>
                   <strong>Threshold pass:</strong> {row.score.passes_threshold ? "yes" : "no"} | <strong>Insight created:</strong>{" "}
                   {row.insight_created ? "yes" : "no"}

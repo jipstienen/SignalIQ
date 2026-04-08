@@ -29,11 +29,15 @@ def _fallback_context(company: Company) -> dict[str, Any]:
     if company.description:
         keywords.extend([token.strip().lower() for token in company.description.split()[:15] if token.strip()])
     return {
+        "business_model": company.description or "N/A",
         "sector": company.sector or "Unknown",
         "subsector": company.subsector or "Unknown",
         "keywords": list(dict.fromkeys(keywords))[:20] or ["operations", "demand", "contracts"],
         "competitors": [],
         "event_weights": dict(DEFAULT_EVENT_WEIGHTS),
+        "key_drivers": ["customer demand", "sourcing reliability", "commercial execution"],
+        "risk_factors": ["cost inflation", "supply disruption", "pricing pressure"],
+        "semantic_signals": ["major customer contract announcements", "supplier disruptions", "distribution expansion news"],
         "business_signals": ["new contracts", "capacity changes", "pricing changes"],
         "geography": [],
     }
@@ -55,6 +59,7 @@ def _normalize_context_payload(company: Company, data: dict[str, Any]) -> dict[s
 
     merged["sector"] = str(merged.get("sector") or fallback["sector"])[:120]
     merged["subsector"] = str(merged.get("subsector") or fallback["subsector"])[:120]
+    merged["business_model"] = str(merged.get("business_model") or fallback["business_model"])[:800]
 
     keywords = [str(x).strip().lower() for x in (merged.get("keywords") or []) if str(x).strip()]
     keywords = [k for k in keywords if k not in {"company", "business", company.name.lower()}]
@@ -65,6 +70,12 @@ def _normalize_context_payload(company: Company, data: dict[str, Any]) -> dict[s
 
     signals = [str(x).strip().lower() for x in (merged.get("business_signals") or []) if str(x).strip()]
     merged["business_signals"] = list(dict.fromkeys(signals))[:10]
+    key_drivers = [str(x).strip().lower() for x in (merged.get("key_drivers") or []) if str(x).strip()]
+    merged["key_drivers"] = list(dict.fromkeys(key_drivers))[:10]
+    risk_factors = [str(x).strip().lower() for x in (merged.get("risk_factors") or []) if str(x).strip()]
+    merged["risk_factors"] = list(dict.fromkeys(risk_factors))[:10]
+    semantic_signals = [str(x).strip().lower() for x in (merged.get("semantic_signals") or []) if str(x).strip()]
+    merged["semantic_signals"] = list(dict.fromkeys(semantic_signals))[:12]
 
     geography = [str(x).strip() for x in (merged.get("geography") or []) if str(x).strip()]
     merged["geography"] = list(dict.fromkeys(geography))[:10]
@@ -86,10 +97,14 @@ def _llm_extract_context(company: Company) -> dict[str, Any]:
 You are a private equity analyst building an intelligence profile.
 Return STRICT JSON only in this exact shape:
 {{
+  "business_model": "",
   "sector": "",
   "subsector": "",
   "keywords": [],
   "competitors": [],
+  "key_drivers": [],
+  "risk_factors": [],
+  "semantic_signals": [],
   "event_weights": {{
     "m&a": 1.0,
     "funding": 0.7,
@@ -105,10 +120,13 @@ Return STRICT JSON only in this exact shape:
 }}
 
 Rules:
-- Keywords: 15-25 high-signal terms/phrases for real-world news matching.
+- Business model: concise but concrete description of value chain and monetization.
+- Keywords: 20-30 high-signal terms/phrases for real-world news matching.
 - Competitors: 5-10 realistic direct competitors or close comparable companies.
 - Avoid generic terms and avoid repeating the company name in keywords.
 - Event weights must be between 0 and 1 and business-model aware.
+- key_drivers and risk_factors: 5-10 each.
+- semantic_signals: describe what kinds of news are relevant, conceptually.
 - Business signals: 5-10 specific indicators.
 
 Company name: {company.name}
@@ -178,6 +196,10 @@ def build_context(user_id: str, db: Session) -> int:
                 "_business_signals": extracted.get("business_signals", []),
                 "_geography": extracted.get("geography", []),
                 "_subsector": extracted.get("subsector", ""),
+                "_business_model": extracted.get("business_model", ""),
+                "_key_drivers": extracted.get("key_drivers", []),
+                "_risk_factors": extracted.get("risk_factors", []),
+                "_semantic_signals": extracted.get("semantic_signals", []),
             }
         else:
             profile = ContextProfile(
@@ -191,6 +213,10 @@ def build_context(user_id: str, db: Session) -> int:
                     "_business_signals": extracted.get("business_signals", []),
                     "_geography": extracted.get("geography", []),
                     "_subsector": extracted.get("subsector", ""),
+                    "_business_model": extracted.get("business_model", ""),
+                    "_key_drivers": extracted.get("key_drivers", []),
+                    "_risk_factors": extracted.get("risk_factors", []),
+                    "_semantic_signals": extracted.get("semantic_signals", []),
                 },
                 priority_weight=1.0,
             )

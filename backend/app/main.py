@@ -131,13 +131,21 @@ def _build_reasoning_trace(user: User, db: Session, limit: int) -> dict:
         business_signals = raw_event_weights.pop("_business_signals", [])
         geography = raw_event_weights.pop("_geography", [])
         subsector = raw_event_weights.pop("_subsector", "")
+        business_model = raw_event_weights.pop("_business_model", "")
+        key_drivers = raw_event_weights.pop("_key_drivers", [])
+        risk_factors = raw_event_weights.pop("_risk_factors", [])
+        semantic_signals = raw_event_weights.pop("_semantic_signals", [])
         context_rows.append(
             {
                 "company_id": str(ctx.company_id),
                 "sector": ctx.sector,
                 "subsector": subsector,
+                "business_model": business_model,
                 "keywords": ctx.keywords,
                 "competitors": ctx.competitors,
+                "key_drivers": key_drivers,
+                "risk_factors": risk_factors,
+                "semantic_signals": semantic_signals,
                 "event_weights": raw_event_weights,
                 "business_signals": business_signals,
                 "geography": geography,
