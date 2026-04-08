@@ -1,0 +1,23 @@
+# Python
+backend/.venv/
+__pycache__/
+*.pyc
+
+# Env files
+.env
+backend/.env
+frontend/.env
+*.env.local
+
+# Node / Next
+node_modules/
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+
+# Vercel
+.vercel/
+
+# OS/editor
+.DS_Store
+.vscode/
