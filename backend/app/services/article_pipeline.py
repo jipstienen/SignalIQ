@@ -48,10 +48,10 @@ def _normalize_newsapi_item(item: dict[str, Any]) -> dict[str, Any] | None:
     }
 
 
-def _fetch_newsapi_items() -> list[dict[str, Any]]:
+def _fetch_newsapi_items() -> tuple[list[dict[str, Any]], str]:
     if not settings.newsapi_key:
         logger.info("NEWSAPI_KEY not set; using default sample feed.")
-        return []
+        return [], "missing_key"
 
     params = {
         "q": settings.newsapi_query,
@@ -69,7 +69,7 @@ def _fetch_newsapi_items() -> list[dict[str, Any]]:
             payload = res.json()
     except Exception as exc:
         logger.warning("NewsAPI fetch failed; using default sample feed: %s", exc)
-        return []
+        return [], "fetch_failed"
 
     articles = payload.get("articles", [])
     normalized: list[dict[str, Any]] = []
@@ -77,12 +77,21 @@ def _fetch_newsapi_items() -> list[dict[str, Any]]:
         row = _normalize_newsapi_item(item)
         if row:
             normalized.append(row)
-    return normalized
+    return normalized, "ok"
 
 
-def fetch_articles(db: Session, feeds: list[dict[str, Any]] | None = None) -> int:
-    newsapi_items = _fetch_newsapi_items()
-    items = feeds or newsapi_items or DEFAULT_FEEDS
+def fetch_articles(db: Session, feeds: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    newsapi_items, newsapi_status = _fetch_newsapi_items()
+    if feeds:
+        items = feeds
+        source = "custom"
+    elif newsapi_items:
+        items = newsapi_items
+        source = "newsapi"
+    else:
+        items = DEFAULT_FEEDS
+        source = "fallback_sample"
+
     inserted = 0
     for item in items:
         exists = db.query(Article).filter(Article.url == item["url"]).one_or_none()
@@ -91,7 +100,12 @@ def fetch_articles(db: Session, feeds: list[dict[str, Any]] | None = None) -> in
         db.add(Article(**item))
         inserted += 1
     db.commit()
-    return inserted
+    return {
+        "inserted": inserted,
+        "source": source,
+        "fetched": len(items),
+        "newsapi_status": newsapi_status,
+    }
 
 
 def extract_features(article: Article) -> dict[str, Any]:
