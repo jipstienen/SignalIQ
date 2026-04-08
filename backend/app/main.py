@@ -1,9 +1,11 @@
+import json
 import logging
 from datetime import datetime, timedelta
 from uuid import UUID
 
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+import httpx
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -12,6 +14,7 @@ from .database import Base, engine, get_db
 from .config import settings
 from .models import (
     Article,
+    ArticleAssessment,
     ArticleFeature,
     Company,
     ContextProfile,
@@ -24,6 +27,9 @@ from .models import (
     UserPreference,
 )
 from .schemas import (
+    AssessmentAskInput,
+    AssessmentAskResponse,
+    AssessmentOut,
     ArticleOut,
     CompanyCreate,
     FeedbackCreate,
@@ -86,12 +92,84 @@ def _run_processing_for_user(user: User, db: Session) -> dict:
     )
     created = 0
     evaluations = []
+    contexts = db.query(ContextProfile).filter(ContextProfile.user_id == user.id).all()
+
+    def label_for_company(article: Article) -> tuple[str | None, str, str]:
+        text = f"{article.title} {article.content}".lower()
+        best_company_id: str | None = None
+        best_score = -1.0
+        best_reason = "No direct portfolio match found."
+        best_type = "irrelevant"
+        for ctx in contexts:
+            company = db.get(Company, ctx.company_id)
+            company_name = company.name if company else "company"
+            score = 0.0
+            reasons: list[str] = []
+            keyword_hits = sum(1 for k in ctx.keywords if k and k.lower() in text)
+            if keyword_hits:
+                score += min(0.5, keyword_hits * 0.05)
+                reasons.append(f"keyword overlap {keyword_hits}")
+            competitor_hits = sum(1 for c in ctx.competitors if c and c.lower() in text)
+            if competitor_hits:
+                score += min(0.3, competitor_hits * 0.1)
+                reasons.append("competitor mention")
+            if ctx.sector and ctx.sector.lower() in text:
+                score += 0.2
+                reasons.append("sector signal")
+
+            rel_type = "industry"
+            if competitor_hits:
+                rel_type = "competitor"
+            if keyword_hits >= 2:
+                rel_type = "direct"
+            if score > best_score:
+                best_score = score
+                best_company_id = str(ctx.company_id)
+                best_type = rel_type if score > 0 else "irrelevant"
+                best_reason = (
+                    f"Relevant for {company_name}: {', '.join(reasons)}"
+                    if reasons
+                    else "Weak company linkage; broad market-only signal."
+                )
+        return best_company_id, best_type, best_reason
     for article in articles:
         feature = db.query(ArticleFeature).filter(ArticleFeature.article_id == article.id).one_or_none()
         if not feature:
             feature = persist_article_features(db, article)
         scored = score_with_db(db, str(user.id), article, feature, user.mode)
         passed = bool(scored["passes_threshold"])
+        company_id, relevance_type, relevance_reason = label_for_company(article)
+        if company_id:
+            existing_assessment = (
+                db.query(ArticleAssessment)
+                .filter(
+                    ArticleAssessment.user_id == user.id,
+                    ArticleAssessment.article_id == article.id,
+                    ArticleAssessment.company_id == UUID(company_id),
+                )
+                .one_or_none()
+            )
+            semantic_score = float(scored["components"].get("semantic_relevance", 0.0))
+            if existing_assessment:
+                existing_assessment.relevance_type = relevance_type
+                existing_assessment.relevance_score = semantic_score
+                existing_assessment.conclusion = relevance_reason
+                existing_assessment.passed_step_2 = passed
+            else:
+                db.add(
+                    ArticleAssessment(
+                        user_id=user.id,
+                        article_id=article.id,
+                        company_id=UUID(company_id),
+                        article_title=article.title,
+                        article_url=article.url,
+                        relevance_type=relevance_type,
+                        relevance_score=semantic_score,
+                        conclusion=relevance_reason,
+                        passed_step_2=passed,
+                        displayed=False,
+                    )
+                )
         if not scored["passes_threshold"]:
             evaluations.append(
                 {
@@ -104,6 +182,13 @@ def _run_processing_for_user(user: User, db: Session) -> dict:
             continue
         exists = db.query(Insight).filter(Insight.article_id == article.id, Insight.user_id == user.id).one_or_none()
         if exists:
+            assessment = (
+                db.query(ArticleAssessment)
+                .filter(ArticleAssessment.user_id == user.id, ArticleAssessment.article_id == article.id)
+                .one_or_none()
+            )
+            if assessment:
+                assessment.displayed = True
             evaluations.append(
                 {
                     "article_id": str(article.id),
@@ -125,6 +210,13 @@ def _run_processing_for_user(user: User, db: Session) -> dict:
             )
         )
         created += 1
+        assessment = (
+            db.query(ArticleAssessment)
+            .filter(ArticleAssessment.user_id == user.id, ArticleAssessment.article_id == article.id)
+            .one_or_none()
+        )
+        if assessment:
+            assessment.displayed = True
         evaluations.append(
             {
                 "article_id": str(article.id),
@@ -402,6 +494,67 @@ def history(days: int = 14, db: Session = Depends(get_db), user_id: str = Depend
         .all()
     )
     return rows
+
+
+@app.get("/assessments", response_model=list[AssessmentOut])
+def list_assessments(limit: int = 200, db: Session = Depends(get_db), user_id: str = Depends(get_current_user_id)):
+    _get_user_or_404(user_id, db)
+    rows = (
+        db.query(ArticleAssessment)
+        .filter(ArticleAssessment.user_id == user_id)
+        .order_by(ArticleAssessment.created_at.desc())
+        .limit(max(1, min(limit, 1000)))
+        .all()
+    )
+    return rows
+
+
+@app.post("/assessments/ask", response_model=AssessmentAskResponse)
+def ask_assessment_history(payload: AssessmentAskInput, db: Session = Depends(get_db), user_id: str = Depends(get_current_user_id)):
+    _get_user_or_404(user_id, db)
+    q = (
+        db.query(ArticleAssessment)
+        .filter(ArticleAssessment.user_id == user_id)
+        .order_by(ArticleAssessment.created_at.desc())
+    )
+    if payload.company_id:
+        q = q.filter(ArticleAssessment.company_id == payload.company_id)
+    rows = q.limit(max(1, min(payload.max_items, 500))).all()
+    if not rows:
+        return AssessmentAskResponse(answer="No assessed articles found for this query.", matched_titles=[])
+
+    context_lines = [
+        f"- {r.article_title} | type={r.relevance_type} | score={r.relevance_score:.2f} | why={r.conclusion}"
+        for r in rows
+    ]
+    prompt = (
+        "You are an analyst assistant. Use only provided assessed article history.\n"
+        f"Question: {payload.question}\nHistory:\n"
+        + "\n".join(context_lines[:200])
+        + "\nGive concise answer and mention relevant titles."
+    )
+
+    provider = (settings.context_provider or "fallback").strip().lower()
+    answer = "Fallback answer: review matched titles below."
+    if provider == "ollama":
+        try:
+            with httpx.Client(timeout=60.0) as client:
+                res = client.post(
+                    f"{settings.ollama_base_url.rstrip('/')}/api/generate",
+                    json={"model": settings.ollama_model, "prompt": prompt, "stream": False},
+                )
+                res.raise_for_status()
+                answer = (res.json().get("response") or "").strip() or answer
+        except Exception:
+            answer = "Ollama unavailable; fallback keyword matching used."
+
+    question_tokens = {t for t in payload.question.lower().split() if len(t) > 2}
+    matched = [
+        r.article_title
+        for r in rows
+        if any(token in (r.article_title + " " + r.conclusion).lower() for token in question_tokens)
+    ][:20]
+    return AssessmentAskResponse(answer=answer, matched_titles=matched)
 
 
 @app.post("/feedback")

@@ -69,6 +69,34 @@ class QueryResponse(BaseModel):
     sources: list[UUID]
 
 
+class AssessmentOut(BaseModel):
+    id: UUID
+    article_id: UUID
+    company_id: UUID
+    article_title: str
+    article_url: str
+    relevance_type: str
+    relevance_score: float
+    conclusion: str
+    passed_step_2: bool
+    displayed: bool
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class AssessmentAskInput(BaseModel):
+    question: str
+    company_id: UUID | None = None
+    max_items: int = 50
+
+
+class AssessmentAskResponse(BaseModel):
+    answer: str
+    matched_titles: list[str]
+
+
 class ReasoningCompanyInput(BaseModel):
     name: str
     industry: str | None = None

@@ -129,3 +129,20 @@ class UserPreference(Base):
     company_weights: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
     sensitivity: Mapped[float] = mapped_column(Float, default=1.0, nullable=False)
 
+
+class ArticleAssessment(Base):
+    __tablename__ = "article_assessments"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True)
+    article_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("articles.id"), nullable=False, index=True)
+    company_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("companies.id"), nullable=False, index=True)
+    article_title: Mapped[str] = mapped_column(String(500), nullable=False)
+    article_url: Mapped[str] = mapped_column(String(800), nullable=False)
+    relevance_type: Mapped[str] = mapped_column(String(40), nullable=False, default="irrelevant")
+    relevance_score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    conclusion: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    passed_step_2: Mapped[bool] = mapped_column(default=False, nullable=False)
+    displayed: Mapped[bool] = mapped_column(default=False, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+
