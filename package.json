@@ -1,0 +1,14 @@
+{
+  "name": "signaliq",
+  "private": true,
+  "scripts": {
+    "dev": "concurrently -k -n api,web -c blue,green \"npm run dev:api\" \"npm run dev:web\"",
+    "dev:api": "cd backend && ./.venv/bin/python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8011",
+    "dev:web": "cd frontend && npx next dev -p 3000",
+    "dev:docker": "docker compose -f docker-compose.dev.yml up --build",
+    "dev:docker:down": "docker compose -f docker-compose.dev.yml down"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  }
+}

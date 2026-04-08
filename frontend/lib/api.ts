@@ -8,6 +8,17 @@ export type Insight = {
   created_at: string;
 };
 
+export type ScoreComponents = {
+  semantic_relevance: number;
+  semantic_category: string;
+  semantic_reason: string;
+  entity_match: number;
+  /** Legacy field; context-based scoring no longer uses global event weights. */
+  event_importance: number;
+  driver_risk_triggered?: boolean;
+  driver_risk_matches?: string;
+};
+
 export type ReasoningTrace = {
   user: {
     id: string;
@@ -16,8 +27,21 @@ export type ReasoningTrace = {
     threshold: number;
     context_provider?: string;
     context_model?: string;
+    /** Present when API is context-based scoring (drivers/risks/keywords), not legacy event-weight blend */
+    scoring_framework?: string;
   };
-  companies: Array<{ id: string; name: string; type: string; sector: string | null; aliases: string[] }>;
+  trace_meta?: {
+    article_limit: number;
+    assessments_in_view: number;
+  };
+  companies: Array<{
+    id: string;
+    name: string;
+    type: string;
+    sector: string | null;
+    aliases: string[];
+    description?: string | null;
+  }>;
   contexts: Array<{
     company_id: string;
     sector: string | null;
@@ -52,20 +76,19 @@ export type ReasoningTrace = {
       sentiment: string | null;
       geography: string | null;
     };
+    matched_company_id: string | null;
+    matched_company_name: string | null;
+    relevance_type: string | null;
+    conclusion: string | null;
+    passed_step_2: boolean | null;
+    displayed: boolean | null;
     score:
       | {
           base_score: number;
           final_score: number;
-          components:
-            | {
-                semantic_relevance: number;
-                semantic_category: string;
-                semantic_reason: string;
-                entity_match: number;
-                event_importance: number;
-              }
-            | null;
           passes_threshold: boolean;
+          components: ScoreComponents | null;
+          source: "insight" | "assessment";
         }
       | null;
     insight_created: boolean;

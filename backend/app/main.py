@@ -5,6 +5,8 @@ from uuid import UUID
 
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.openapi.docs import get_swagger_ui_html
+from fastapi.responses import HTMLResponse
 import httpx
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
@@ -47,10 +49,47 @@ from .services.context_engine import build_context
 from .services.delivery import DAILY_LIMITS, generate_daily_report
 from .services.feedback import apply_message_directive, message_to_feedback_type, update_user_preferences
 from .services.insight_generation import generate_insight
-from .services.scoring import THRESHOLDS, pick_best_company_for_article, score_with_db
+from .services.scoring import THRESHOLDS, driver_risk_trigger_info, pick_best_company_for_article, score_with_db
 
-app = FastAPI(title="Portfolio Intelligence Platform")
+app = FastAPI(
+    title="Portfolio Intelligence Platform",
+    openapi_url="/openapi.json",
+    docs_url=None,
+    redoc_url="/redoc",
+)
 logger = logging.getLogger(__name__)
+
+
+@app.get("/docs", include_in_schema=False)
+def swagger_ui() -> HTMLResponse:
+    """Use unpkg for Swagger assets (some networks block cdn.jsdelivr.net, which causes a blank /docs)."""
+    return get_swagger_ui_html(
+        openapi_url="/openapi.json",
+        title=f"{app.title} — Swagger UI",
+        swagger_js_url="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js",
+        swagger_css_url="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css",
+    )
+
+
+@app.get("/", response_class=HTMLResponse)
+def api_home() -> str:
+    """Swagger UI loads JS from a CDN; if /docs is blank, use /redoc or openapi.json."""
+    return """<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"/><title>Portfolio Intelligence API</title></head>
+<body style="font-family: system-ui, sans-serif; max-width: 42rem; margin: 2rem;">
+  <h1>Portfolio Intelligence Platform</h1>
+  <p>API is running. Open interactive docs:</p>
+  <ul>
+    <li><a href="/docs">Swagger UI</a> (<code>/docs</code>) — if this page is blank, try ReDoc or check browser extensions / network blocking CDNs.</li>
+    <li><a href="/redoc">ReDoc</a> (<code>/redoc</code>) — often works when Swagger does not.</li>
+    <li><a href="/openapi.json"><code>openapi.json</code></a> — raw OpenAPI schema.</li>
+  </ul>
+</body></html>"""
+
+
+@app.get("/health")
+def health() -> dict[str, str]:
+    return {"status": "ok"}
 
 app.add_middleware(
     CORSMiddleware,
@@ -114,12 +153,14 @@ def _run_processing_for_user(user: User, db: Session) -> dict:
 
         if contexts:
             best_ctx, em, ev, _base_pc, _final_pc, rel_type = pick_best_company_for_article(
-                feature, contexts, pref, sem_rel, sem_cat
+                article, feature, contexts, pref, sem_rel, sem_cat
             )
             if best_ctx:
                 company = db.get(Company, best_ctx.company_id)
                 cname = company.name if company else "company"
-                conclusion = f"{sem_reason} · Best match: {cname} ({rel_type})."
+                trig = comp.get("driver_risk_matches") or ""
+                trig_note = f" Driver/risk trigger: {trig}" if comp.get("driver_risk_triggered") and trig else ""
+                conclusion = f"{sem_reason}{trig_note} · Best match: {cname} ({rel_type})."
                 db.add(
                     ArticleAssessment(
                         user_id=user.id,
@@ -202,6 +243,7 @@ def _run_processing_for_user(user: User, db: Session) -> dict:
         "evaluated_count": len(articles),
         "process_article_ids": [str(a.id) for a in articles],
         "step_2_evaluations": evaluations,
+        "scoring_framework": "context_profiles_v1",
     }
 
 
@@ -281,12 +323,15 @@ def _build_reasoning_trace(user: User, db: Session, limit: int) -> dict:
 
         components = None
         if assessment:
+            trig = driver_risk_trigger_info(article, contexts)
             components = {
                 "semantic_relevance": float(assessment.relevance_score),
                 "semantic_category": assessment.semantic_category,
                 "semantic_reason": assessment.semantic_reason,
                 "entity_match": float(assessment.entity_match),
                 "event_importance": float(assessment.event_importance),
+                "driver_risk_triggered": trig["triggered"],
+                "driver_risk_matches": trig.get("summary") or "",
             }
 
         score_payload = None
@@ -348,6 +393,7 @@ def _build_reasoning_trace(user: User, db: Session, limit: int) -> dict:
             "threshold": THRESHOLDS[user.mode],
             "context_provider": (settings.context_provider or "fallback"),
             "context_model": settings.ollama_model if (settings.context_provider or "").lower() == "ollama" else settings.context_model,
+            "scoring_framework": "context_profiles_v1",
         },
         "companies": companies,
         "contexts": context_rows,
@@ -496,6 +542,7 @@ def reasoning_generate(payload: ReasoningGenerateInput, db: Session = Depends(ge
     trace = _build_reasoning_trace(user, db, payload.limit)
 
     run_summary = {
+        "scoring_framework": "context_profiles_v1",
         "step_1_fetched": ingest_result.get("fetched"),
         "ingest_inserted": ingest_result.get("inserted"),
         "ingest_inserted_article_ids": ingest_result.get("inserted_article_ids") or [],

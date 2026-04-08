@@ -151,6 +151,45 @@ export default function ReasoningPage() {
         {lastResult && <pre style={{ whiteSpace: "pre-wrap", background: "#f7f7f7", padding: 8 }}>{JSON.stringify(lastResult, null, 2)}</pre>}
       </section>
 
+      {lastResult && (lastResult as { run_summary?: Record<string, unknown> }).run_summary && (
+        <section style={{ marginBottom: 20, border: "1px solid #ddd", borderRadius: 8, padding: 12, background: "#fafafa" }}>
+          <h2>Run summary (this generate)</h2>
+          <p style={{ fontSize: 14, color: "#444" }}>
+            {(lastResult as { run_summary?: { note?: string } }).run_summary?.note}
+          </p>
+          <ul style={{ fontSize: 14 }}>
+            <li>
+              <strong>Ingest source:</strong> {String((lastResult as { run_summary?: { ingest_source?: string } }).run_summary?.ingest_source ?? "—")} |{" "}
+              <strong>NewsAPI:</strong> {String((lastResult as { run_summary?: { newsapi_status?: string } }).run_summary?.newsapi_status ?? "—")}
+            </li>
+            <li>
+              <strong>Step 1 fetched:</strong> {String((lastResult as { run_summary?: { step_1_fetched?: number } }).run_summary?.step_1_fetched ?? "—")} |{" "}
+              <strong>Inserted this run:</strong> {String((lastResult as { run_summary?: { ingest_inserted?: number } }).run_summary?.ingest_inserted ?? "—")}
+            </li>
+            <li>
+              <strong>Step 2 evaluated:</strong> {String((lastResult as { run_summary?: { process_evaluated_count?: number } }).run_summary?.process_evaluated_count ?? "—")} |{" "}
+              <strong>Insights created:</strong> {String((lastResult as { run_summary?: { insights_created?: number } }).run_summary?.insights_created ?? "—")} |{" "}
+              <strong>Threshold:</strong> {String((lastResult as { run_summary?: { threshold?: number } }).run_summary?.threshold ?? "—")}
+            </li>
+            <li>
+              <strong>Trace list limit:</strong> {String((lastResult as { run_summary?: { trace_article_limit?: number } }).run_summary?.trace_article_limit ?? "—")} (table below)
+            </li>
+          </ul>
+          <details style={{ marginTop: 8 }}>
+            <summary>Inserted article IDs (this ingest)</summary>
+            <pre style={{ fontSize: 12, overflow: "auto", maxHeight: 120 }}>
+              {JSON.stringify((lastResult as { run_summary?: { ingest_inserted_article_ids?: string[] } }).run_summary?.ingest_inserted_article_ids ?? [], null, 2)}
+            </pre>
+          </details>
+          <details style={{ marginTop: 8 }}>
+            <summary>Process article IDs (scored in step 2)</summary>
+            <pre style={{ fontSize: 12, overflow: "auto", maxHeight: 120 }}>
+              {JSON.stringify((lastResult as { run_summary?: { process_article_ids?: string[] } }).run_summary?.process_article_ids ?? [], null, 2)}
+            </pre>
+          </details>
+        </section>
+      )}
+
       {lastResult && (
         <section style={{ marginBottom: 20, border: "1px solid #ddd", borderRadius: 8, padding: 12 }}>
           <h2>Funnel Output</h2>
@@ -210,6 +249,18 @@ export default function ReasoningPage() {
               <strong>Context Provider:</strong> {trace.user.context_provider || "fallback"} | <strong>Model:</strong>{" "}
               {trace.user.context_model || "n/a"}
             </p>
+            <p>
+              <strong>Scoring:</strong>{" "}
+              {trace.user.scoring_framework === "context_profiles_v1"
+                ? "Context profile (keywords, semantic signals, key drivers & risk triggers) — not legacy event-weight blend"
+                : trace.user.scoring_framework || "See API version; re-run Build Context + Process after upgrading backend"}
+            </p>
+            {trace.trace_meta && (
+              <p>
+                <strong>Trace window:</strong> last {trace.trace_meta.article_limit} articles by date ·{" "}
+                <strong>With scores in view:</strong> {trace.trace_meta.assessments_in_view}
+              </p>
+            )}
           </section>
 
           <section style={{ marginBottom: 20 }}>
@@ -222,6 +273,7 @@ export default function ReasoningPage() {
                 </p>
                 <p>Sector: {company.sector || "n/a"}</p>
                 <p>Aliases: {company.aliases.join(", ") || "n/a"}</p>
+                {"description" in company && company.description ? <p>Description: {company.description}</p> : null}
               </article>
             ))}
           </section>
@@ -289,18 +341,57 @@ export default function ReasoningPage() {
                   <strong>Features:</strong> entities={row.features.entities.join(", ") || "n/a"}; sectors={row.features.sectors.join(", ") || "n/a"}; event=
                   {row.features.event_type || "general"}
                 </p>
+                {(row.matched_company_name || row.matched_company_id) && (
+                  <p>
+                    <strong>Best match:</strong> {row.matched_company_name || row.matched_company_id}
+                    {row.relevance_type ? ` (${row.relevance_type})` : ""}
+                  </p>
+                )}
+                {row.conclusion && (
+                  <p>
+                    <strong>Conclusion:</strong> {row.conclusion}
+                  </p>
+                )}
+                {row.passed_step_2 != null && (
+                  <p>
+                    <strong>Step 2 pass:</strong> {row.passed_step_2 ? "yes" : "no"} | <strong>Displayed:</strong>{" "}
+                    {row.displayed == null ? "n/a" : row.displayed ? "yes" : "no"}
+                  </p>
+                )}
                 {row.score ? (
                   <>
                     <p>
-                      <strong>Score:</strong> final {row.score.final_score.toFixed(3)} (base {row.score.base_score.toFixed(3)})
+                      <strong>Score ({row.score.source}):</strong> final {row.score.final_score.toFixed(3)} (base {row.score.base_score.toFixed(3)})
                     </p>
                     <p>
                       <strong>Threshold pass:</strong> {row.score.passes_threshold ? "yes" : "no"} | <strong>Insight created:</strong>{" "}
                       {row.insight_created ? "yes" : "no"}
                     </p>
+                    {row.score.components && (
+                      <>
+                        <p>
+                          <strong>Context relevance:</strong> {row.score.components.semantic_relevance.toFixed(3)} ({row.score.components.semantic_category})
+                        </p>
+                        <p style={{ fontSize: 14, color: "#333" }}>{row.score.components.semantic_reason}</p>
+                        <p>
+                          <strong>Entity match:</strong> {row.score.components.entity_match.toFixed(3)}
+                          {row.score.components.driver_risk_triggered ? (
+                            <>
+                              {" "}
+                              | <strong>Driver/risk trigger:</strong> yes
+                              {row.score.components.driver_risk_matches
+                                ? ` — ${row.score.components.driver_risk_matches}`
+                                : ""}
+                            </>
+                          ) : null}
+                        </p>
+                      </>
+                    )}
                   </>
                 ) : (
-                  <p><strong>Score:</strong> not computed in trace view (run process for strict step 2 scoring)</p>
+                  <p>
+                    <strong>Score:</strong> not yet assessed for this user (run <em>Process</em> or <em>Generate Full Trace</em>)
+                  </p>
                 )}
               </article>
             ))}

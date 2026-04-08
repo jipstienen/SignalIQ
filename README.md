@@ -13,6 +13,54 @@ Backend-driven portfolio intelligence system for private equity teams.
 - `backend/` API, data model, scoring pipeline, feedback loop, delivery jobs
 - `frontend/` minimal dashboard/settings/history UI
 
+## Recommended: full stack in Docker (hot reload)
+
+One command runs **Postgres**, **FastAPI** (`uvicorn --reload`), and **Next.js** (`next dev`). Edits on disk show up without reinstalling dependencies.
+
+**Requirements:** Docker CLI (install **Docker Desktop for Mac**, open it once, wait until it says “Docker is running”).
+
+If you see `sh: docker: command not found`:
+
+1. Install: [Docker Desktop for Mac](https://www.docker.com/products/docker-desktop/) (Apple Silicon or Intel), **or** with Homebrew: `brew install --cask docker` then open **Docker** from Applications.
+2. Start Docker Desktop and wait until the whale icon is steady.
+3. In a **new** terminal, run `docker --version` — it should print a version. If not, quit Terminal, reopen, and try again.
+
+From the repo root:
+
+```bash
+npm run dev:docker
+```
+
+Then open:
+
+- **App:** [http://localhost:3000](http://localhost:3000)  
+- **API:** [http://localhost:8000](http://localhost:8000) (links to `/docs`, `/redoc`, `openapi.json`)
+
+Optional env (shell or `.env` in repo root):
+
+```bash
+export NEXT_PUBLIC_USER_TOKEN='<your-user-uuid>'
+export CONTEXT_PROVIDER=ollama
+export NEWSAPI_KEY=...
+npm run dev:docker
+```
+
+Stop: `Ctrl+C` or `npm run dev:docker:down`.
+
+The frontend calls the API at `**http://localhost:8000**` (browser → host, not container-to-container).
+
+### No Docker (native dev)
+
+Use this until Docker is installed. From repo root:
+
+```bash
+ulimit -n 10240   # optional; reduces “too many open files” on macOS
+npm install       # once, at repo root (for concurrently)
+npm run dev
+```
+
+That runs the API on **[http://127.0.0.1:8011](http://127.0.0.1:8011)** and the app on **[http://localhost:3000](http://localhost:3000)**. Set `frontend/.env.local` to `NEXT_PUBLIC_API_URL=http://localhost:8011` (see **Run Frontend** below).
+
 ## Run Backend
 
 ```bash

@@ -171,13 +171,16 @@ def fetch_articles(db: Session, user_id: str | None = None, feeds: list[dict[str
             for item in items
         ]
 
-    inserted = 0
+    inserted_article_ids: list[str] = []
     for item in broad_candidates:
         exists = db.query(Article).filter(Article.url == item["url"]).one_or_none()
         if exists:
             continue
-        db.add(Article(**item))
-        inserted += 1
+        row = Article(**item)
+        db.add(row)
+        db.flush()
+        inserted_article_ids.append(str(row.id))
+    inserted = len(inserted_article_ids)
     db.commit()
     return {
         "step_1_broad": {
@@ -188,6 +191,7 @@ def fetch_articles(db: Session, user_id: str | None = None, feeds: list[dict[str
             "evaluations": stage1_evaluations,
         },
         "inserted": inserted,
+        "inserted_article_ids": inserted_article_ids,
         "source": source,
         "fetched": len(items),
         "newsapi_status": newsapi_status,

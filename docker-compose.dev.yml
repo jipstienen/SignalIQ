@@ -1,0 +1,69 @@
+# Full local dev: Postgres + API (uvicorn --reload) + Next (dev server).
+# Usage (repo root):
+#   docker compose -f docker-compose.dev.yml up --build
+# Open:
+#   http://localhost:3000   — frontend
+#   http://localhost:8000   — API (Swagger at /docs, ReDoc at /redoc)
+#
+# Env: optional NEXT_PUBLIC_USER_TOKEN, OPENAI_API_KEY, NEWSAPI_KEY, CONTEXT_PROVIDER
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: portfolio_intel
+    ports:
+      # Host 5433 avoids clashing with a Postgres already on 5432
+      - "5433:5432"
+    volumes:
+      - portfolio_intel_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d portfolio_intel"]
+      interval: 3s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.dev
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+    environment:
+      DATABASE_URL: postgresql+psycopg2://postgres:postgres@postgres:5432/portfolio_intel
+      APP_BASE_URL: http://localhost:8000
+      OLLAMA_BASE_URL: http://host.docker.internal:11434
+      CONTEXT_PROVIDER: ${CONTEXT_PROVIDER:-fallback}
+      CONTEXT_MODEL: ${CONTEXT_MODEL:-gpt-4.1-mini}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      NEWSAPI_KEY: ${NEWSAPI_KEY:-}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.1:8b}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  web:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8000
+      NEXT_PUBLIC_USER_TOKEN: ${NEXT_PUBLIC_USER_TOKEN:-}
+      WATCHPACK_POLLING: "true"
+      CHOKIDAR_USEPOLLING: "true"
+    depends_on:
+      - api
+
+volumes:
+  portfolio_intel_pg:

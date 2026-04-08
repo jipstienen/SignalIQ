@@ -1,0 +1,12 @@
+FROM node:20-alpine
+WORKDIR /app
+
+COPY package.json package-lock.json ./
+RUN npm ci
+
+# Snapshot for anonymous /app/node_modules volume when bind-mounting source
+COPY . .
+EXPOSE 3000
+ENV NEXT_TELEMETRY_DISABLED=1
+# Bind-mount overwrites /app; anonymous volume keeps container node_modules
+CMD ["npm", "run", "dev", "--", "-p", "3000", "-H", "0.0.0.0"]
