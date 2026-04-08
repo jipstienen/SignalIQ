@@ -14,9 +14,12 @@ export type ReasoningTrace = {
   contexts: Array<{
     company_id: string;
     sector: string | null;
+    subsector?: string;
     keywords: string[];
     competitors: string[];
     event_weights: Record<string, number>;
+    business_signals?: string[];
+    geography?: string[];
     priority_weight: number;
   }>;
   preferences: {

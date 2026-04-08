@@ -176,10 +176,19 @@ export default function ReasoningPage() {
                   <strong>Sector:</strong> {ctx.sector || "n/a"}
                 </p>
                 <p>
+                  <strong>Subsector:</strong> {ctx.subsector || "n/a"}
+                </p>
+                <p>
                   <strong>Keywords:</strong> {ctx.keywords.join(", ") || "n/a"}
                 </p>
                 <p>
                   <strong>Competitors:</strong> {ctx.competitors.join(", ") || "n/a"}
+                </p>
+                <p>
+                  <strong>Business Signals:</strong> {(ctx.business_signals || []).join(", ") || "n/a"}
+                </p>
+                <p>
+                  <strong>Geography:</strong> {(ctx.geography || []).join(", ") || "n/a"}
                 </p>
                 <p>
                   <strong>Event Weights:</strong> {JSON.stringify(ctx.event_weights)}

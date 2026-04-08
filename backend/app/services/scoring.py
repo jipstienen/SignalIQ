@@ -11,6 +11,10 @@ GLOBAL_EVENT_WEIGHTS = {
     "m&a": 1.0,
     "layoffs": 0.6,
     "regulatory": 0.8,
+    "supply_chain": 0.9,
+    "pricing": 0.7,
+    "expansion": 0.8,
+    "partnerships": 0.6,
     "general": 0.4,
 }
 
