@@ -38,6 +38,18 @@ class InsightOut(BaseModel):
         from_attributes = True
 
 
+class ArticleOut(BaseModel):
+    id: UUID
+    title: str
+    content: str
+    source: str
+    url: str
+    published_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
 class FeedbackCreate(BaseModel):
     insight_id: UUID
     feedback_type: FeedbackType

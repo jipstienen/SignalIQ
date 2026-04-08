@@ -21,6 +21,7 @@ from .models import (
     UserPreference,
 )
 from .schemas import (
+    ArticleOut,
     CompanyCreate,
     FeedbackCreate,
     InsightOut,
@@ -153,6 +154,13 @@ def list_insights(db: Session = Depends(get_db), user_id: str = Depends(get_curr
         .limit(200)
         .all()
     )
+    return rows
+
+
+@app.get("/articles", response_model=list[ArticleOut])
+def list_articles(limit: int = 50, db: Session = Depends(get_db), user_id: str = Depends(get_current_user_id)):
+    _get_user_or_404(user_id, db)
+    rows = db.query(Article).order_by(Article.published_at.desc()).limit(max(1, min(limit, 200))).all()
     return rows
 
 
