@@ -52,18 +52,22 @@ export type ReasoningTrace = {
       sentiment: string | null;
       geography: string | null;
     };
-    score: {
-      base_score: number;
-      final_score: number;
-      components: {
-        semantic_relevance: number;
-        semantic_category: string;
-        semantic_reason: string;
-        entity_match: number;
-        event_importance: number;
-      };
-      passes_threshold: boolean;
-    };
+    score:
+      | {
+          base_score: number;
+          final_score: number;
+          components:
+            | {
+                semantic_relevance: number;
+                semantic_category: string;
+                semantic_reason: string;
+                entity_match: number;
+                event_importance: number;
+              }
+            | null;
+          passes_threshold: boolean;
+        }
+      | null;
     insight_created: boolean;
     insight_id: string | null;
   }>;

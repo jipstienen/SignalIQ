@@ -117,17 +117,29 @@ def _build_generic_terms(db: Session, user_id: str | None) -> set[str]:
     return base_terms
 
 
-def _broad_filter(items: list[dict[str, Any]], terms: set[str]) -> list[dict[str, Any]]:
+def _broad_filter(items: list[dict[str, Any]], terms: set[str]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     scored: list[tuple[int, dict[str, Any]]] = []
+    evaluations: list[dict[str, Any]] = []
     for item in items:
         text = f"{item.get('title', '')} {item.get('content', '')}".lower()
         hit_count = sum(1 for term in terms if term and term in text)
+        evaluations.append(
+            {
+                "title": item.get("title", ""),
+                "url": item.get("url", ""),
+                "stage1_signal_hits": hit_count,
+                "passed_step_1": hit_count > 0,
+            }
+        )
         if hit_count <= 0:
             continue
         scored.append((hit_count, item))
     scored.sort(key=lambda x: x[0], reverse=True)
     limit = max(1, min(settings.stage1_candidate_limit, 500))
-    return [item for _, item in scored[:limit]]
+    selected_urls = {item.get("url", "") for _, item in scored[:limit]}
+    for row in evaluations:
+        row["selected_for_step_2"] = row.get("url", "") in selected_urls
+    return [item for _, item in scored[:limit]], evaluations
 
 
 def fetch_articles(db: Session, user_id: str | None = None, feeds: list[dict[str, Any]] | None = None) -> dict[str, Any]:
@@ -144,7 +156,20 @@ def fetch_articles(db: Session, user_id: str | None = None, feeds: list[dict[str
 
     # Step 1: broad funnel (generic terms over 7-day max 1000 fetch)
     generic_terms = _build_generic_terms(db, user_id)
-    broad_candidates = _broad_filter(items, generic_terms) if source != "fallback_sample" else items
+    if source != "fallback_sample":
+        broad_candidates, stage1_evaluations = _broad_filter(items, generic_terms)
+    else:
+        broad_candidates = items
+        stage1_evaluations = [
+            {
+                "title": item.get("title", ""),
+                "url": item.get("url", ""),
+                "stage1_signal_hits": 1,
+                "passed_step_1": True,
+                "selected_for_step_2": True,
+            }
+            for item in items
+        ]
 
     inserted = 0
     for item in broad_candidates:
@@ -160,6 +185,7 @@ def fetch_articles(db: Session, user_id: str | None = None, feeds: list[dict[str
             "generic_terms": len(generic_terms),
             "candidates_selected": len(broad_candidates),
             "days_back": max(1, settings.stage1_days_back),
+            "evaluations": stage1_evaluations,
         },
         "inserted": inserted,
         "source": source,

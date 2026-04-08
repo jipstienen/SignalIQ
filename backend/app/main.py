@@ -76,17 +76,42 @@ def _get_user_or_404(user_id: str, db: Session) -> User:
 
 
 def _run_processing_for_user(user: User, db: Session) -> dict:
-    articles = db.query(Article).all()
+    cutoff = datetime.utcnow() - timedelta(days=max(1, settings.stage1_days_back))
+    articles = (
+        db.query(Article)
+        .filter(Article.published_at >= cutoff)
+        .order_by(Article.published_at.desc())
+        .limit(max(1, min(settings.stage1_candidate_limit, 500)))
+        .all()
+    )
     created = 0
+    evaluations = []
     for article in articles:
         feature = db.query(ArticleFeature).filter(ArticleFeature.article_id == article.id).one_or_none()
         if not feature:
             feature = persist_article_features(db, article)
         scored = score_with_db(db, str(user.id), article, feature, user.mode)
+        passed = bool(scored["passes_threshold"])
         if not scored["passes_threshold"]:
+            evaluations.append(
+                {
+                    "article_id": str(article.id),
+                    "title": article.title,
+                    "passed_step_2": False,
+                    "displayed": False,
+                }
+            )
             continue
         exists = db.query(Insight).filter(Insight.article_id == article.id, Insight.user_id == user.id).one_or_none()
         if exists:
+            evaluations.append(
+                {
+                    "article_id": str(article.id),
+                    "title": article.title,
+                    "passed_step_2": passed,
+                    "displayed": True,
+                }
+            )
             continue
         text = generate_insight(article, "portfolio company", feature.event_type or "general")
         db.add(
@@ -100,8 +125,21 @@ def _run_processing_for_user(user: User, db: Session) -> dict:
             )
         )
         created += 1
+        evaluations.append(
+            {
+                "article_id": str(article.id),
+                "title": article.title,
+                "passed_step_2": passed,
+                "displayed": True,
+            }
+        )
     db.commit()
-    return {"insights_created": created, "threshold": THRESHOLDS[user.mode]}
+    return {
+        "insights_created": created,
+        "threshold": THRESHOLDS[user.mode],
+        "evaluated_count": len(articles),
+        "step_2_evaluations": evaluations,
+    }
 
 
 def _build_reasoning_trace(user: User, db: Session, limit: int) -> dict:
@@ -159,7 +197,6 @@ def _build_reasoning_trace(user: User, db: Session, limit: int) -> dict:
         feature = db.query(ArticleFeature).filter(ArticleFeature.article_id == article.id).one_or_none()
         if not feature:
             feature = persist_article_features(db, article)
-        score = score_with_db(db, str(user.id), article, feature, user.mode)
         insight = db.query(Insight).filter(Insight.article_id == article.id, Insight.user_id == user.id).one_or_none()
         scored_rows.append(
             {
@@ -175,7 +212,16 @@ def _build_reasoning_trace(user: User, db: Session, limit: int) -> dict:
                     "sentiment": feature.sentiment,
                     "geography": feature.geography,
                 },
-                "score": score,
+                "score": (
+                    {
+                        "base_score": insight.base_score,
+                        "final_score": insight.final_score,
+                        "passes_threshold": insight.final_score >= THRESHOLDS[user.mode],
+                        "components": None,
+                    }
+                    if insight
+                    else None
+                ),
                 "insight_created": insight is not None,
                 "insight_id": str(insight.id) if insight else None,
             }

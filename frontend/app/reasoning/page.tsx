@@ -124,6 +124,38 @@ export default function ReasoningPage() {
         <p><strong>Status:</strong> {status || "idle"}</p>
         {lastResult && <pre style={{ whiteSpace: "pre-wrap", background: "#f7f7f7", padding: 8 }}>{JSON.stringify(lastResult, null, 2)}</pre>}
       </section>
+
+      {lastResult && (
+        <section style={{ marginBottom: 20, border: "1px solid #ddd", borderRadius: 8, padding: 12 }}>
+          <h2>Funnel Output</h2>
+          <h3>Step 1: Broad Evaluation (up to 1000)</h3>
+          {Array.isArray((lastResult as any)?.ingest?.step_1_broad?.evaluations) &&
+          (lastResult as any).ingest.step_1_broad.evaluations.length > 0 ? (
+            <div style={{ maxHeight: 280, overflow: "auto", border: "1px solid #eee", padding: 8 }}>
+              {(lastResult as any).ingest.step_1_broad.evaluations.map((row: any, idx: number) => (
+                <p key={`${row.url || row.title}-${idx}`} style={{ margin: "4px 0" }}>
+                  {row.selected_for_step_2 ? "PASS" : "FAIL"} - {row.title}
+                </p>
+              ))}
+            </div>
+          ) : (
+            <p>No step 1 evaluation data available yet.</p>
+          )}
+
+          <h3 style={{ marginTop: 12 }}>Step 2: Strict Scoring and Display Pick</h3>
+          {Array.isArray((lastResult as any)?.process?.step_2_evaluations) && (lastResult as any).process.step_2_evaluations.length > 0 ? (
+            <div style={{ maxHeight: 280, overflow: "auto", border: "1px solid #eee", padding: 8 }}>
+              {(lastResult as any).process.step_2_evaluations.map((row: any, idx: number) => (
+                <p key={`${row.article_id || row.title}-${idx}`} style={{ margin: "4px 0" }}>
+                  {row.passed_step_2 ? "PASS" : "FAIL"} / {row.displayed ? "DISPLAYED" : "NOT_DISPLAYED"} - {row.title}
+                </p>
+              ))}
+            </div>
+          ) : (
+            <p>No step 2 scoring data available yet.</p>
+          )}
+        </section>
+      )}
       <div style={{ marginBottom: 16 }}>
         <label>
           Articles to score:{" "}
@@ -231,18 +263,19 @@ export default function ReasoningPage() {
                   <strong>Features:</strong> entities={row.features.entities.join(", ") || "n/a"}; sectors={row.features.sectors.join(", ") || "n/a"}; event=
                   {row.features.event_type || "general"}
                 </p>
-                <p>
-                  <strong>Score:</strong> final {row.score.final_score.toFixed(3)} (base {row.score.base_score.toFixed(3)})
-                </p>
-                <p>
-                  Components: semantic {row.score.components.semantic_relevance.toFixed(2)} ({row.score.components.semantic_category}), entity{" "}
-                  {row.score.components.entity_match.toFixed(2)}, event {row.score.components.event_importance.toFixed(2)}
-                </p>
-                <p><strong>Semantic Reason:</strong> {row.score.components.semantic_reason || "n/a"}</p>
-                <p>
-                  <strong>Threshold pass:</strong> {row.score.passes_threshold ? "yes" : "no"} | <strong>Insight created:</strong>{" "}
-                  {row.insight_created ? "yes" : "no"}
-                </p>
+                {row.score ? (
+                  <>
+                    <p>
+                      <strong>Score:</strong> final {row.score.final_score.toFixed(3)} (base {row.score.base_score.toFixed(3)})
+                    </p>
+                    <p>
+                      <strong>Threshold pass:</strong> {row.score.passes_threshold ? "yes" : "no"} | <strong>Insight created:</strong>{" "}
+                      {row.insight_created ? "yes" : "no"}
+                    </p>
+                  </>
+                ) : (
+                  <p><strong>Score:</strong> not computed in trace view (run process for strict step 2 scoring)</p>
+                )}
               </article>
             ))}
           </section>
