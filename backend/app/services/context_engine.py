@@ -1,6 +1,7 @@
 import json
 from typing import Any
 
+import httpx
 from openai import OpenAI
 from sqlalchemy.orm import Session
 
@@ -81,9 +82,6 @@ def _normalize_context_payload(company: Company, data: dict[str, Any]) -> dict[s
 
 
 def _llm_extract_context(company: Company) -> dict[str, Any]:
-    if not settings.openai_api_key:
-        return _fallback_context(company)
-    client = OpenAI(api_key=settings.openai_api_key)
     prompt = f"""
 You are a private equity analyst building an intelligence profile.
 Return STRICT JSON only in this exact shape:
@@ -118,12 +116,39 @@ Industry: {company.sector or ""}
 Description: {company.description or ""}
 Known subsector: {company.subsector or ""}
 """
-    response = client.chat.completions.create(
-        model="gpt-4.1-mini",
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.2,
-    )
-    content = response.choices[0].message.content or "{}"
+    provider = (settings.context_provider or "fallback").strip().lower()
+
+    content = "{}"
+    if provider == "openai":
+        if not settings.openai_api_key:
+            return _fallback_context(company)
+        client = OpenAI(api_key=settings.openai_api_key)
+        response = client.chat.completions.create(
+            model=settings.context_model or "gpt-4.1-mini",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.2,
+        )
+        content = response.choices[0].message.content or "{}"
+    elif provider == "ollama":
+        try:
+            with httpx.Client(timeout=60.0) as client:
+                response = client.post(
+                    f"{settings.ollama_base_url.rstrip('/')}/api/generate",
+                    json={
+                        "model": settings.ollama_model,
+                        "prompt": prompt,
+                        "stream": False,
+                        "format": "json",
+                    },
+                )
+                response.raise_for_status()
+                payload = response.json()
+                content = payload.get("response") or "{}"
+        except Exception:
+            return _fallback_context(company)
+    else:
+        return _fallback_context(company)
+
     try:
         data = json.loads(_strip_json_fence(content))
         return _normalize_context_payload(company, data)
