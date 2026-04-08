@@ -1,8 +1,12 @@
-from datetime import datetime
+import logging
+from datetime import datetime, timedelta
 from typing import Any
 
+import httpx
+from dateutil.parser import isoparse
 from sqlalchemy.orm import Session
 
+from ..config import settings
 from ..models import Article, ArticleFeature
 
 DEFAULT_FEEDS = [
@@ -15,9 +19,70 @@ DEFAULT_FEEDS = [
     }
 ]
 
+logger = logging.getLogger(__name__)
+
+
+def _normalize_newsapi_item(item: dict[str, Any]) -> dict[str, Any] | None:
+    url = item.get("url")
+    title = item.get("title")
+    if not url or not title:
+        return None
+
+    content = item.get("content") or item.get("description") or title
+    source_name = (item.get("source") or {}).get("name") or "newsapi"
+    published_at_raw = item.get("publishedAt")
+
+    published_at = datetime.utcnow()
+    if published_at_raw:
+        try:
+            published_at = isoparse(published_at_raw)
+        except (TypeError, ValueError):
+            pass
+
+    return {
+        "title": title[:500],
+        "content": content,
+        "source": source_name[:200],
+        "url": url[:800],
+        "published_at": published_at,
+    }
+
+
+def _fetch_newsapi_items() -> list[dict[str, Any]]:
+    if not settings.newsapi_key:
+        logger.info("NEWSAPI_KEY not set; using default sample feed.")
+        return []
+
+    params = {
+        "q": settings.newsapi_query,
+        "language": "en",
+        "sortBy": "publishedAt",
+        "from": (datetime.utcnow() - timedelta(days=2)).date().isoformat(),
+        "pageSize": max(1, min(settings.newsapi_page_size, 100)),
+    }
+    headers = {"X-Api-Key": settings.newsapi_key}
+
+    try:
+        with httpx.Client(timeout=20.0) as client:
+            res = client.get(settings.newsapi_url, params=params, headers=headers)
+            res.raise_for_status()
+            payload = res.json()
+    except Exception as exc:
+        logger.warning("NewsAPI fetch failed; using default sample feed: %s", exc)
+        return []
+
+    articles = payload.get("articles", [])
+    normalized: list[dict[str, Any]] = []
+    for item in articles:
+        row = _normalize_newsapi_item(item)
+        if row:
+            normalized.append(row)
+    return normalized
+
 
 def fetch_articles(db: Session, feeds: list[dict[str, Any]] | None = None) -> int:
-    items = feeds or DEFAULT_FEEDS
+    newsapi_items = _fetch_newsapi_items()
+    items = feeds or newsapi_items or DEFAULT_FEEDS
     inserted = 0
     for item in items:
         exists = db.query(Article).filter(Article.url == item["url"]).one_or_none()

@@ -10,6 +10,10 @@ class Settings(BaseSettings):
     resend_api_key: str = ""
     slack_bot_token: str = ""
     app_base_url: str = "http://localhost:8000"
+    newsapi_key: str = ""
+    newsapi_url: str = "https://newsapi.org/v2/everything"
+    newsapi_query: str = "private equity OR portfolio company OR M&A OR funding"
+    newsapi_page_size: int = 25
 
 
 settings = Settings()

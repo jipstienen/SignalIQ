@@ -29,6 +29,12 @@ uvicorn app.main:app --reload
 
 If you already run Postgres locally, you can skip `docker compose up -d postgres`.
 
+To enable live ingestion from NewsAPI, add this in `backend/.env`:
+
+```bash
+NEWSAPI_KEY=your_newsapi_key
+```
+
 ## Run Frontend
 
 ```bash
