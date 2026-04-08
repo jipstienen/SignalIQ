@@ -1,20 +1,54 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ReasoningTrace, getReasoningTrace } from "../../lib/api";
+import { ReasoningTrace, getReasoningTrace, runContextBuild, runIngest, runProcess } from "../../lib/api";
 
 export default function ReasoningPage() {
   const [trace, setTrace] = useState<ReasoningTrace | null>(null);
   const [limit, setLimit] = useState(25);
+  const [busy, setBusy] = useState(false);
+  const [status, setStatus] = useState<string>("");
+  const [lastResult, setLastResult] = useState<Record<string, unknown> | null>(null);
+
+  const refreshTrace = async () => {
+    const data = await getReasoningTrace(limit);
+    setTrace(data);
+  };
 
   useEffect(() => {
-    getReasoningTrace(limit).then(setTrace);
+    refreshTrace();
   }, [limit]);
+
+  const runAction = async (name: string, fn: () => Promise<Record<string, unknown>>) => {
+    try {
+      setBusy(true);
+      setStatus(`${name} running...`);
+      const result = await fn();
+      setLastResult(result);
+      setStatus(`${name} completed`);
+      await refreshTrace();
+    } catch (err) {
+      setStatus(`${name} failed: ${err instanceof Error ? err.message : "unknown error"}`);
+    } finally {
+      setBusy(false);
+    }
+  };
 
   return (
     <main>
       <h1>Pipeline Reasoning Trace</h1>
       <p>Inspect how inputs become insights through each deterministic stage.</p>
+      <section style={{ marginBottom: 20, border: "1px solid #ddd", borderRadius: 8, padding: 12 }}>
+        <h2>Pipeline Controls</h2>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
+          <button disabled={busy} onClick={() => runAction("Ingest", runIngest)}>Run Ingest</button>
+          <button disabled={busy} onClick={() => runAction("Context Build", runContextBuild)}>Build Context</button>
+          <button disabled={busy} onClick={() => runAction("Process", runProcess)}>Run Process</button>
+          <button disabled={busy} onClick={refreshTrace}>Refresh Trace</button>
+        </div>
+        <p><strong>Status:</strong> {status || "idle"}</p>
+        {lastResult && <pre style={{ whiteSpace: "pre-wrap", background: "#f7f7f7", padding: 8 }}>{JSON.stringify(lastResult, null, 2)}</pre>}
+      </section>
       <div style={{ marginBottom: 16 }}>
         <label>
           Articles to score:{" "}

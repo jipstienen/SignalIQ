@@ -99,3 +99,21 @@ export async function getReasoningTrace(limit = 25): Promise<ReasoningTrace | nu
   return res.json();
 }
 
+export async function runIngest(): Promise<Record<string, unknown>> {
+  const res = await fetch(`${API_URL}/pipeline/ingest`, { method: "POST", headers: headers() });
+  if (!res.ok) throw new Error(`Ingest failed: ${res.status}`);
+  return res.json();
+}
+
+export async function runContextBuild(): Promise<Record<string, unknown>> {
+  const res = await fetch(`${API_URL}/context/build`, { method: "POST", headers: headers() });
+  if (!res.ok) throw new Error(`Context build failed: ${res.status}`);
+  return res.json();
+}
+
+export async function runProcess(): Promise<Record<string, unknown>> {
+  const res = await fetch(`${API_URL}/pipeline/process`, { method: "POST", headers: headers() });
+  if (!res.ok) throw new Error(`Process failed: ${res.status}`);
+  return res.json();
+}
+
