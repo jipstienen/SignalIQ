@@ -23,6 +23,7 @@ export default function ReasoningPage() {
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string>("");
   const [lastResult, setLastResult] = useState<Record<string, unknown> | null>(null);
+  const [progress, setProgress] = useState(0);
 
   const refreshTrace = async () => {
     const data = await getReasoningTrace(limit);
@@ -56,15 +57,21 @@ export default function ReasoningPage() {
   const runAction = async (name: string, fn: () => Promise<Record<string, unknown>>) => {
     try {
       setBusy(true);
+      setProgress(10);
       setStatus(`${name} running...`);
+      setProgress(45);
       const result = await fn();
+      setProgress(85);
       setLastResult(result);
       setStatus(`${name} completed`);
       await refreshTrace();
+      setProgress(100);
     } catch (err) {
       setStatus(`${name} failed: ${err instanceof Error ? err.message : "unknown error"}`);
+      setProgress(0);
     } finally {
       setBusy(false);
+      window.setTimeout(() => setProgress(0), 800);
     }
   };
 
@@ -76,15 +83,21 @@ export default function ReasoningPage() {
     }
     try {
       setBusy(true);
+      setProgress(5);
       setStatus("Generate running: context -> ingest -> process...");
+      setProgress(20);
       const result = await runReasoningGenerate(companies, strictness, limit);
+      setProgress(90);
       setLastResult(result);
       setTrace(result.trace);
       setStatus("Generate completed");
+      setProgress(100);
     } catch (err) {
       setStatus(`Generate failed: ${err instanceof Error ? err.message : "unknown error"}`);
+      setProgress(0);
     } finally {
       setBusy(false);
+      window.setTimeout(() => setProgress(0), 1000);
     }
   };
 
@@ -122,6 +135,19 @@ export default function ReasoningPage() {
           <button disabled={busy} onClick={refreshTrace}>Refresh Trace</button>
         </div>
         <p><strong>Status:</strong> {status || "idle"}</p>
+        <div style={{ marginTop: 8 }}>
+          <div style={{ height: 10, background: "#eee", borderRadius: 6, overflow: "hidden" }}>
+            <div
+              style={{
+                width: `${progress}%`,
+                height: "100%",
+                background: "#2563eb",
+                transition: "width 250ms ease",
+              }}
+            />
+          </div>
+          <p style={{ marginTop: 6 }}><strong>Progress:</strong> {progress}%</p>
+        </div>
         {lastResult && <pre style={{ whiteSpace: "pre-wrap", background: "#f7f7f7", padding: 8 }}>{JSON.stringify(lastResult, null, 2)}</pre>}
       </section>
 
