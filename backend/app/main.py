@@ -13,6 +13,7 @@ from .models import (
     Article,
     ArticleFeature,
     Company,
+    ContextProfile,
     Insight,
     User,
     UserCompany,
@@ -162,6 +163,83 @@ def list_articles(limit: int = 50, db: Session = Depends(get_db), user_id: str =
     _get_user_or_404(user_id, db)
     rows = db.query(Article).order_by(Article.published_at.desc()).limit(max(1, min(limit, 200))).all()
     return rows
+
+
+@app.get("/reasoning")
+def reasoning_trace(limit: int = 25, db: Session = Depends(get_db), user_id: str = Depends(get_current_user_id)):
+    user = _get_user_or_404(user_id, db)
+    contexts = db.query(ContextProfile).filter(ContextProfile.user_id == user_id).all()
+    preference = db.query(UserPreference).filter(UserPreference.user_id == user_id).one_or_none()
+
+    links = db.query(UserCompany).filter(UserCompany.user_id == user_id).all()
+    companies = []
+    for link in links:
+        company = db.get(Company, link.company_id)
+        if not company:
+            continue
+        companies.append(
+            {
+                "id": str(company.id),
+                "name": company.name,
+                "type": link.type.value,
+                "sector": company.sector,
+                "aliases": company.aliases,
+            }
+        )
+
+    context_rows = []
+    for ctx in contexts:
+        context_rows.append(
+            {
+                "company_id": str(ctx.company_id),
+                "sector": ctx.sector,
+                "keywords": ctx.keywords,
+                "competitors": ctx.competitors,
+                "event_weights": ctx.event_weights,
+                "priority_weight": ctx.priority_weight,
+            }
+        )
+
+    article_rows = db.query(Article).order_by(Article.published_at.desc()).limit(max(1, min(limit, 100))).all()
+    scored_rows = []
+    for article in article_rows:
+        feature = db.query(ArticleFeature).filter(ArticleFeature.article_id == article.id).one_or_none()
+        if not feature:
+            feature = persist_article_features(db, article)
+        score = score_with_db(db, user_id, article, feature, user.mode)
+        insight = db.query(Insight).filter(Insight.article_id == article.id, Insight.user_id == user_id).one_or_none()
+        scored_rows.append(
+            {
+                "article_id": str(article.id),
+                "title": article.title,
+                "source": article.source,
+                "url": article.url,
+                "published_at": article.published_at.isoformat(),
+                "features": {
+                    "entities": feature.entities,
+                    "sectors": feature.sectors,
+                    "event_type": feature.event_type,
+                    "sentiment": feature.sentiment,
+                    "geography": feature.geography,
+                },
+                "score": score,
+                "insight_created": insight is not None,
+                "insight_id": str(insight.id) if insight else None,
+            }
+        )
+
+    return {
+        "user": {"id": str(user.id), "email": user.email, "mode": user.mode.value, "threshold": THRESHOLDS[user.mode]},
+        "companies": companies,
+        "contexts": context_rows,
+        "preferences": {
+            "event_weights": preference.event_weights if preference else {},
+            "sector_weights": preference.sector_weights if preference else {},
+            "company_weights": preference.company_weights if preference else {},
+            "sensitivity": preference.sensitivity if preference else 1.0,
+        },
+        "scored_articles": scored_rows,
+    }
 
 
 @app.get("/history", response_model=list[InsightOut])
