@@ -10,10 +10,14 @@ class Settings(BaseSettings):
     resend_api_key: str = ""
     slack_bot_token: str = ""
     app_base_url: str = "http://localhost:8000"
+    context_provider: str = "fallback"
+    context_model: str = "gpt-4.1-mini"
     newsapi_key: str = ""
     newsapi_url: str = "https://newsapi.org/v2/everything"
     newsapi_query: str = "private equity OR portfolio company OR M&A OR funding"
     newsapi_page_size: int = 25
+    ollama_base_url: str = "http://localhost:11434"
+    ollama_model: str = "llama3.1:8b"
 
 
 settings = Settings()

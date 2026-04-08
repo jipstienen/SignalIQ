@@ -9,7 +9,14 @@ export type Insight = {
 };
 
 export type ReasoningTrace = {
-  user: { id: string; email: string; mode: "high_signal" | "balanced" | "exploratory"; threshold: number };
+  user: {
+    id: string;
+    email: string;
+    mode: "high_signal" | "balanced" | "exploratory";
+    threshold: number;
+    context_provider?: string;
+    context_model?: string;
+  };
   companies: Array<{ id: string; name: string; type: string; sector: string | null; aliases: string[] }>;
   contexts: Array<{
     company_id: string;

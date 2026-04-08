@@ -148,6 +148,10 @@ export default function ReasoningPage() {
             <p>
               <strong>Mode:</strong> {trace.user.mode} | <strong>Threshold:</strong> {trace.user.threshold}
             </p>
+            <p>
+              <strong>Context Provider:</strong> {trace.user.context_provider || "fallback"} | <strong>Model:</strong>{" "}
+              {trace.user.context_model || "n/a"}
+            </p>
           </section>
 
           <section style={{ marginBottom: 20 }}>

@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from .auth import get_current_user_id
 from .database import Base, engine, get_db
+from .config import settings
 from .models import (
     Article,
     ArticleFeature,
@@ -52,6 +53,7 @@ app.add_middleware(
         "https://signaliq-pi.vercel.app",
         "https://signaliq-bjxa3ifyt-jipstienen-1309s-projects.vercel.app",
     ],
+    allow_origin_regex=r"^http://localhost:\d+$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -172,7 +174,14 @@ def _build_reasoning_trace(user: User, db: Session, limit: int) -> dict:
         )
 
     return {
-        "user": {"id": str(user.id), "email": user.email, "mode": user.mode.value, "threshold": THRESHOLDS[user.mode]},
+        "user": {
+            "id": str(user.id),
+            "email": user.email,
+            "mode": user.mode.value,
+            "threshold": THRESHOLDS[user.mode],
+            "context_provider": (settings.context_provider or "fallback"),
+            "context_model": settings.ollama_model if (settings.context_provider or "").lower() == "ollama" else settings.context_model,
+        },
         "companies": companies,
         "contexts": context_rows,
         "preferences": {
@@ -318,6 +327,8 @@ def reasoning_generate(payload: ReasoningGenerateInput, db: Session = Depends(ge
     return {
         "strictness": payload.strictness,
         "mode": user.mode.value,
+        "context_provider": (settings.context_provider or "fallback"),
+        "context_model": settings.ollama_model if (settings.context_provider or "").lower() == "ollama" else settings.context_model,
         "company_rows_received": len(payload.companies),
         "companies_created_or_linked": created_or_linked,
         "context": context_result,

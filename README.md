@@ -35,6 +35,22 @@ To enable live ingestion from NewsAPI, add this in `backend/.env`:
 NEWSAPI_KEY=your_newsapi_key
 ```
 
+To enable AI context generation, set one provider in `backend/.env`:
+
+```bash
+# Option 1: free local testing via Ollama
+CONTEXT_PROVIDER=ollama
+OLLAMA_BASE_URL=http://localhost:11434
+OLLAMA_MODEL=llama3.1:8b
+
+# Option 2: OpenAI API
+CONTEXT_PROVIDER=openai
+OPENAI_API_KEY=your_openai_key
+CONTEXT_MODEL=gpt-4.1-mini
+```
+
+If `CONTEXT_PROVIDER=fallback`, no LLM is used.
+
 ## Run Frontend
 
 ```bash
