@@ -3,6 +3,7 @@ from datetime import datetime, timedelta
 from uuid import UUID
 
 from fastapi import Depends, FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -39,6 +40,18 @@ from .services.scoring import THRESHOLDS, score_with_db
 
 app = FastAPI(title="Portfolio Intelligence Platform")
 logger = logging.getLogger(__name__)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:3000",
+        "https://signaliq-pi.vercel.app",
+        "https://signaliq-bjxa3ifyt-jipstienen-1309s-projects.vercel.app",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 @app.on_event("startup")
