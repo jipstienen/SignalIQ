@@ -8,6 +8,15 @@ export type Insight = {
   created_at: string;
 };
 
+export type Article = {
+  id: string;
+  title: string;
+  content: string;
+  source: string;
+  url: string;
+  published_at: string;
+};
+
 export type ScoreComponents = {
   semantic_relevance: number;
   semantic_category: string;
@@ -112,8 +121,21 @@ function headers() {
   };
 }
 
+function httpErrorMessage(action: string, status: number): string {
+  if (status === 401) {
+    return `${action} failed: 401 — missing or invalid auth. Set NEXT_PUBLIC_USER_TOKEN in frontend/.env.local to a user id from POST /users. For "npm run dev" use NEXT_PUBLIC_API_URL=http://localhost:8011 and create the user against port 8011; for Docker use port 8000. Restart next dev after editing .env.local.`;
+  }
+  return `${action} failed: ${status}`;
+}
+
 export async function getInsights(): Promise<Insight[]> {
   const res = await fetch(`${API_URL}/insights`, { headers: headers(), cache: "no-store" });
+  if (!res.ok) return [];
+  return res.json();
+}
+
+export async function getArticles(limit = 50): Promise<Article[]> {
+  const res = await fetch(`${API_URL}/articles?limit=${limit}`, { headers: headers(), cache: "no-store" });
   if (!res.ok) return [];
   return res.json();
 }
@@ -140,27 +162,58 @@ export async function updateMode(mode: "high_signal" | "balanced" | "exploratory
   });
 }
 
-export async function getReasoningTrace(limit = 25): Promise<ReasoningTrace | null> {
-  const res = await fetch(`${API_URL}/reasoning?limit=${limit}`, { headers: headers(), cache: "no-store" });
-  if (!res.ok) return null;
-  return res.json();
+export type ReasoningTraceFetch = {
+  trace: ReasoningTrace | null;
+  error: string | null;
+};
+
+/** Loads trace; on failure sets error (HTTP body snippet, 401 hint, or network message) instead of silent null. */
+export async function getReasoningTrace(limit = 25): Promise<ReasoningTraceFetch> {
+  try {
+    const res = await fetch(`${API_URL}/reasoning?limit=${limit}`, { headers: headers(), cache: "no-store" });
+    if (!res.ok) {
+      let body = "";
+      try {
+        body = await res.text();
+      } catch {
+        /* ignore */
+      }
+      const snippet = body.replace(/\s+/g, " ").slice(0, 200);
+      if (res.status === 401) {
+        return {
+          trace: null,
+          error:
+            "401 — API rejected the token. Set NEXT_PUBLIC_USER_TOKEN in frontend/.env.local to your user UUID (POST /users), use NEXT_PUBLIC_API_URL=http://localhost:8000 for Docker or :8011 for native npm run dev, then restart the web container / next dev.",
+        };
+      }
+      return { trace: null, error: `HTTP ${res.status}${snippet ? `: ${snippet}` : ""}` };
+    }
+    const trace = (await res.json()) as ReasoningTrace;
+    return { trace, error: null };
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "Network error";
+    return {
+      trace: null,
+      error: `${msg} (check NEXT_PUBLIC_API_URL points at a running API: http://localhost:8000 for Docker)`,
+    };
+  }
 }
 
 export async function runIngest(): Promise<Record<string, unknown>> {
   const res = await fetch(`${API_URL}/pipeline/ingest`, { method: "POST", headers: headers() });
-  if (!res.ok) throw new Error(`Ingest failed: ${res.status}`);
+  if (!res.ok) throw new Error(httpErrorMessage("Ingest", res.status));
   return res.json();
 }
 
 export async function runContextBuild(): Promise<Record<string, unknown>> {
   const res = await fetch(`${API_URL}/context/build`, { method: "POST", headers: headers() });
-  if (!res.ok) throw new Error(`Context build failed: ${res.status}`);
+  if (!res.ok) throw new Error(httpErrorMessage("Context build", res.status));
   return res.json();
 }
 
 export async function runProcess(): Promise<Record<string, unknown>> {
   const res = await fetch(`${API_URL}/pipeline/process`, { method: "POST", headers: headers() });
-  if (!res.ok) throw new Error(`Process failed: ${res.status}`);
+  if (!res.ok) throw new Error(httpErrorMessage("Process", res.status));
   return res.json();
 }
 
@@ -174,7 +227,7 @@ export async function runReasoningGenerate(
     headers: headers(),
     body: JSON.stringify({ companies, strictness, limit }),
   });
-  if (!res.ok) throw new Error(`Generate failed: ${res.status}`);
+  if (!res.ok) throw new Error(httpErrorMessage("Generate", res.status));
   return res.json();
 }
 

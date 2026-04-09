@@ -1,4 +1,5 @@
 import json
+import logging
 from typing import Any
 
 import httpx
@@ -7,6 +8,8 @@ from sqlalchemy.orm import Session
 
 from ..config import settings
 from ..models import Company, ContextProfile, UserCompany
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_EVENT_WEIGHTS = {
     "m&a": 1.0,
@@ -162,7 +165,8 @@ Known subsector: {company.subsector or ""}
                 response.raise_for_status()
                 payload = response.json()
                 content = payload.get("response") or "{}"
-        except Exception:
+        except Exception as exc:
+            logger.warning("Ollama context build failed (%s); using keyword fallback.", exc)
             return _fallback_context(company)
     else:
         return _fallback_context(company)

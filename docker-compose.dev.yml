@@ -5,7 +5,10 @@
 #   http://localhost:3000   — frontend
 #   http://localhost:8000   — API (Swagger at /docs, ReDoc at /redoc)
 #
-# Env: optional NEXT_PUBLIC_USER_TOKEN, OPENAI_API_KEY, NEWSAPI_KEY, CONTEXT_PROVIDER
+# Env:
+#   - frontend/.env.local — NEXT_PUBLIC_USER_TOKEN (required for API auth from the browser).
+#   - root .env — optional; copy from .env.example. Set CONTEXT_PROVIDER=ollama + run Ollama on the host to use local LLM
+#     (otherwise the API stays on keyword fallback; trace will show context_provider: fallback).
 
 services:
   postgres:
@@ -39,9 +42,8 @@ services:
       OLLAMA_BASE_URL: http://host.docker.internal:11434
       CONTEXT_PROVIDER: ${CONTEXT_PROVIDER:-fallback}
       CONTEXT_MODEL: ${CONTEXT_MODEL:-gpt-4.1-mini}
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      NEWSAPI_KEY: ${NEWSAPI_KEY:-}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-llama3.1:8b}
+      # Do not set OPENAI_API_KEY / NEWSAPI_KEY here — an empty ${:-} overrides backend/.env inside the container.
     depends_on:
       postgres:
         condition: service_healthy
@@ -57,9 +59,13 @@ services:
     volumes:
       - ./frontend:/app
       - /app/node_modules
+    # Load token from frontend/.env.local. Do NOT set NEXT_PUBLIC_USER_TOKEN here with ${:-} — an empty
+    # host value overrides .env.local inside the container and breaks auth (401).
+    env_file:
+      - frontend/.env.local
     environment:
+      # Overrides .env.local so browser hits the host-mapped API, not 8011 from native-dev defaults.
       NEXT_PUBLIC_API_URL: http://localhost:8000
-      NEXT_PUBLIC_USER_TOKEN: ${NEXT_PUBLIC_USER_TOKEN:-}
       WATCHPACK_POLLING: "true"
       CHOKIDAR_USEPOLLING: "true"
     depends_on:

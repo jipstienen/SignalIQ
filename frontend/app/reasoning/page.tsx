@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   ReasoningCompanyInput,
   ReasoningTrace,
@@ -24,15 +24,23 @@ export default function ReasoningPage() {
   const [status, setStatus] = useState<string>("");
   const [lastResult, setLastResult] = useState<Record<string, unknown> | null>(null);
   const [progress, setProgress] = useState(0);
+  const [traceError, setTraceError] = useState<string | null>(null);
+  const [traceLoading, setTraceLoading] = useState(true);
 
-  const refreshTrace = async () => {
-    const data = await getReasoningTrace(limit);
-    setTrace(data);
-  };
+  const refreshTrace = useCallback(async () => {
+    setTraceLoading(true);
+    try {
+      const { trace: data, error } = await getReasoningTrace(limit);
+      setTrace(data);
+      setTraceError(error);
+    } finally {
+      setTraceLoading(false);
+    }
+  }, [limit]);
 
   useEffect(() => {
     refreshTrace();
-  }, [limit]);
+  }, [refreshTrace]);
 
   const parseTableInput = (): ReasoningCompanyInput[] => {
     const lines = tableInput
@@ -90,6 +98,7 @@ export default function ReasoningPage() {
       setProgress(90);
       setLastResult(result);
       setTrace(result.trace);
+      setTraceError(null);
       setStatus("Generate completed");
       setProgress(100);
     } catch (err) {
@@ -193,13 +202,66 @@ export default function ReasoningPage() {
       {lastResult && (
         <section style={{ marginBottom: 20, border: "1px solid #ddd", borderRadius: 8, padding: 12 }}>
           <h2>Funnel Output</h2>
-          <h3>Step 1: Broad Evaluation (up to 1000)</h3>
+          <h3>Step 1a: NewsAPI retrieval (two-phase)</h3>
+          {(lastResult as any)?.ingest?.step_1_broad?.step_1_retrieval ? (
+            <div style={{ marginBottom: 12 }}>
+              <details open>
+                <summary>Direct search (entity / product / competitor names)</summary>
+                <pre style={{ fontSize: 12, overflow: "auto", maxHeight: 200, background: "#f9f9f9", padding: 8 }}>
+                  {JSON.stringify(
+                    (lastResult as any).ingest.step_1_broad.step_1_retrieval.step_1_direct_terms,
+                    null,
+                    2
+                  )}
+                </pre>
+              </details>
+              <details open style={{ marginTop: 8 }}>
+                <summary>Broad search (industry / themes / synonyms)</summary>
+                <pre style={{ fontSize: 12, overflow: "auto", maxHeight: 200, background: "#f9f9f9", padding: 8 }}>
+                  {JSON.stringify(
+                    (lastResult as any).ingest.step_1_broad.step_1_retrieval.step_2_broad_terms,
+                    null,
+                    2
+                  )}
+                </pre>
+              </details>
+              <details style={{ marginTop: 8 }}>
+                <summary>Brief semantic filter (broad-only)</summary>
+                <pre style={{ fontSize: 12, overflow: "auto", maxHeight: 220, background: "#f9f9f9", padding: 8 }}>
+                  {JSON.stringify(
+                    (lastResult as any).ingest.step_1_broad.step_1_retrieval.step_3_semantic_filter,
+                    null,
+                    2
+                  )}
+                </pre>
+              </details>
+              <details style={{ marginTop: 8 }}>
+                <summary>Scored / kept articles (ingest)</summary>
+                <pre style={{ fontSize: 12, overflow: "auto", maxHeight: 280, background: "#f9f9f9", padding: 8 }}>
+                  {JSON.stringify(
+                    (lastResult as any).ingest.step_1_broad.step_1_retrieval.scored_articles,
+                    null,
+                    2
+                  )}
+                </pre>
+              </details>
+            </div>
+          ) : (
+            <p style={{ color: "#555", fontSize: 14 }}>
+              No two-phase retrieval trace (legacy ingest or custom feed). See evaluations below.
+            </p>
+          )}
+
+          <h3>Step 1b: Candidates inserted (evaluations)</h3>
           {Array.isArray((lastResult as any)?.ingest?.step_1_broad?.evaluations) &&
           (lastResult as any).ingest.step_1_broad.evaluations.length > 0 ? (
             <div style={{ maxHeight: 280, overflow: "auto", border: "1px solid #eee", padding: 8 }}>
               {(lastResult as any).ingest.step_1_broad.evaluations.map((row: any, idx: number) => (
-                <p key={`${row.url || row.title}-${idx}`} style={{ margin: "4px 0" }}>
-                  {row.selected_for_step_2 ? "PASS" : "FAIL"} - {row.title}
+                <p key={`${row.url || row.title}-${idx}`} style={{ margin: "4px 0", fontSize: 14 }}>
+                  {row.selected_for_step_2 ? "PASS" : "FAIL"}
+                  {row.retrieval_tier != null ? ` [${row.retrieval_tier}]` : ""}
+                  {row.ingest_semantic_score != null ? ` score=${row.ingest_semantic_score}` : ""}
+                  {row.ingest_semantic_note ? ` — ${row.ingest_semantic_note}` : ""} — {row.title}
                 </p>
               ))}
             </div>
@@ -234,7 +296,25 @@ export default function ReasoningPage() {
         </label>
       </div>
 
-      {!trace && <p>Unable to load reasoning trace.</p>}
+      {busy && !trace && (
+        <p style={{ color: "#555", marginBottom: 16 }}>
+          Running pipeline… The trace table will appear when this step completes. (A background trace load can wait
+          while the API runs this job.)
+        </p>
+      )}
+      {traceLoading && !trace && !busy && (
+        <p style={{ color: "#555", marginBottom: 16 }}>Loading reasoning trace…</p>
+      )}
+      {!traceLoading && !trace && !busy && (
+        <div style={{ border: "1px solid #fca", background: "#fff8f0", borderRadius: 8, padding: 12, marginBottom: 16 }}>
+          <p style={{ margin: "0 0 8px", fontWeight: 600 }}>Unable to load reasoning trace</p>
+          {traceError ? (
+            <p style={{ margin: 0, fontFamily: "monospace", fontSize: 13, whiteSpace: "pre-wrap" }}>{traceError}</p>
+          ) : (
+            <p style={{ margin: 0 }}>Empty response — try Refresh Trace or check the API.</p>
+          )}
+        </div>
+      )}
       {trace && (
         <>
           <section style={{ marginBottom: 20 }}>

@@ -548,6 +548,8 @@ def reasoning_generate(payload: ReasoningGenerateInput, db: Session = Depends(ge
         "ingest_inserted_article_ids": ingest_result.get("inserted_article_ids") or [],
         "ingest_source": ingest_result.get("source"),
         "newsapi_status": ingest_result.get("newsapi_status"),
+        "newsapi_hint": ingest_result.get("newsapi_hint"),
+        "ingest_insert_note": ingest_result.get("insert_note"),
         "process_evaluated_count": process_result.get("evaluated_count"),
         "process_article_ids": process_result.get("process_article_ids") or [],
         "insights_created": process_result.get("insights_created"),
